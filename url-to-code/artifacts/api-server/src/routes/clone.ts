@@ -532,4 +532,12 @@ router.get("/clone/:jobId/download", (req, res) => {
   }
 
   let hostname = "site";
-  try { hostname = new URL(job.url!).hostname; } catch { /* ignor
+  try { hostname = new URL(job.url!).hostname; } catch { /* ignore */ }
+
+  const filename = `${hostname}.zip`;
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Content-Type", "application/zip");
+  fs.createReadStream(job.zipPath).pipe(res);
+});
+
+export default router;

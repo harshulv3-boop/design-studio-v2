@@ -161,4 +161,3 @@ multi-page selection — the project schema already supports multiple pages.
 - **`TEST_RESULTS.md`** — fidelity methodology and numbers.
 - **`app-design-studio/PRD_REPORT.md`** — the studio's own engineering handoff (pre-integration).
 - **`GITHUB_UPLOAD_GUIDE.md`** — how to upload this repo to GitHub.
-                                                                
