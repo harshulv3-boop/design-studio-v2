@@ -141,7 +141,7 @@ async function runClone(job: Job, targetUrl: string) {
     const extraArgs = (process.env.CLONE_CHROMIUM_ARGS || "").split(",").map((a) => a.trim()).filter(Boolean);
     browser = await chromium.launch({ headless: true, executablePath: execPath, args: extraArgs });
     const context = await browser.newContext({
-      viewport: { width: 1440, height: 900 },
+      viewport: { width: 1536, height: 960 },
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     });
@@ -296,7 +296,7 @@ async function runClone(job: Job, targetUrl: string) {
       const editable = {
         sourceUrl: targetUrl,
         title: captured.title,
-        frameWidth: 1440,
+        frameWidth: 1536,
         pageHeight: captured.pageHeight,
         html: captured.html,
         css,
