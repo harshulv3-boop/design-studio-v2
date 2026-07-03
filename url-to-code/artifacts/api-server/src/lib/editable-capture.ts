@@ -167,7 +167,14 @@ export const EDITABLE_CAPTURE_SCRIPT = String.raw`
     catch (e) { warnings.push("sheet parse failed: " + e.message); return null; }
   };
 
-  const PSEUDO_RE = /::?[a-zA-Z-]+(\([^)]*\))?/g;
+  // Strip real pseudo-classes/elements before probing with querySelector, but
+  // NOT an escaped colon: Tailwind class names contain literal colons written
+  // as "\:" (e.g. .md\:text-3xl, .lg\:max-w-lg). Without the (?<!\\) guard the
+  // regex ate the "\:text-" part, mangled the selector, and querySelector found
+  // nothing — silently tree-shaking out every responsive utility whose name has
+  // a digit after the variant (text sizes, max-widths, etc.), which shows up as
+  // wrong/small text and narrow columns on any Tailwind site.
+  const PSEUDO_RE = /(?<!\\)::?[a-zA-Z-]+(\([^)]*\))?/g;
   const selectorMatches = (sel) => {
     const s = sel.trim();
     if (!s) return false;
@@ -489,6 +496,29 @@ export const EDITABLE_CAPTURE_SCRIPT = String.raw`
         if (w > 0) {
           const prev = c.getAttribute("style") || "";
           c.setAttribute("style", prev + (prev ? ";" : "") + "width:" + w + "px");
+        }
+      }
+
+      // Freeze the desktop HORIZONTAL placement of positioned elements. A hero
+      // heading is often offset with 100vw / calc() / CSS-var math (e.g.
+      // left: calc(max(5%,(100vw-var(--content-area))/2))). That doesn't survive
+      // CSS flattening intact (commas in the escaped selector, an undefined var,
+      // or 100vw meaning the editor canvas instead of the frozen 1440px page),
+      // so the element snaps to the left edge and its responsive max-width
+      // collapses to the mobile value. Capture is on the live desktop page, so
+      // the computed left/right + max-width are the desktop truth — pin just
+      // those. We deliberately do NOT touch top/bottom/max-height: vertical
+      // offsets on layered hero art are load-bearing and freezing them (or a
+      // max-height) can clip whole sections to blank.
+      if ((cs.position === "absolute" || cs.position === "fixed") &&
+          (cs.left !== "auto" || cs.right !== "auto")) {
+        let extra = "";
+        if (cs.left !== "auto") extra += "left:" + cs.left + ";";
+        if (cs.right !== "auto") extra += "right:" + cs.right + ";";
+        if (cs.maxWidth && cs.maxWidth !== "none") extra += "max-width:" + cs.maxWidth + ";";
+        if (extra) {
+          const prev = c.getAttribute("style") || "";
+          c.setAttribute("style", prev + (prev ? ";" : "") + extra.slice(0, -1));
         }
       }
     }
