@@ -183,23 +183,27 @@ export const EDITABLE_CAPTURE_SCRIPT = String.raw`
   const keepRuleText = [];
   let shaken = 0, kept = 0;
 
-  const walkRules = (rules) => {
+  const walkRules = (rules, out) => {
+    if (!out) out = keepRuleText;
     for (const rule of rules) {
       const t = rule.constructor.name;
       if (t === "CSSMediaRule") {
+        // @media queries evaluate against the VIEWPORT, which differs between
+        // capture (1440px) and the editor canvas (zoomed / not viewport-sized).
+        // So we bake in the desktop state: keep only rules matching now, flatten.
         const cond = rule.conditionText || rule.media.mediaText;
-        if (window.matchMedia(cond).matches) walkRules(rule.cssRules);
+        if (window.matchMedia(cond).matches) walkRules(rule.cssRules, out);
         continue;
       }
       if (t === "CSSSupportsRule") {
         let ok = true;
         try { ok = CSS.supports(rule.conditionText); } catch { ok = true; }
-        if (ok) walkRules(rule.cssRules);
+        if (ok) walkRules(rule.cssRules, out);
         continue;
       }
       if (t === "CSSKeyframesRule") continue;
       if (t === "CSSImportRule") continue;
-      if (t === "CSSFontFaceRule") { keepRuleText.push(rule.cssText); kept++; continue; }
+      if (t === "CSSFontFaceRule") { out.push(rule.cssText); kept++; continue; }
       if (t === "CSSStyleRule") {
         const selList = rule.selectorText.split(",");
         const alive = selList.filter(selectorMatches);
@@ -225,12 +229,12 @@ export const EDITABLE_CAPTURE_SCRIPT = String.raw`
         const rewritten = alive.map((s) =>
           s.replace(/(^|[^\w-])(:root|html|body)(?![\w-])/gi, "$1.screen")
         ).join(",");
-        keepRuleText.push(rewritten + body);
+        out.push(rewritten + body);
         kept++;
         continue;
       }
-      if (rule.cssRules && rule.cssRules.length) { walkRules(rule.cssRules); continue; }
-      keepRuleText.push(rule.cssText); kept++;
+      if (rule.cssRules && rule.cssRules.length) { walkRules(rule.cssRules, out); continue; }
+      out.push(rule.cssText); kept++;
     }
   };
 
@@ -453,6 +457,38 @@ export const EDITABLE_CAPTURE_SCRIPT = String.raw`
         if (rect.width > 1 && rect.height > 1 && hasContent) {
           const prev = c.getAttribute("style") || "";
           c.setAttribute("style", prev + (prev ? ";" : "") + "opacity:1");
+        }
+      }
+
+      // Freeze the desktop LAYOUT ARRANGEMENT + WIDTH.
+      // @container queries resolve against a container's rendered width. Our CSS
+      // flatten can't evaluate them, so which branch wins is non-deterministic
+      // (varies run to run) and often lands on the mobile/stacked/narrow variant
+      // — the live desktop page is stable at the wide layout. Capture runs on
+      // that live desktop page, so getComputedStyle here IS the desktop value;
+      // inlining the layout-deciding properties pins the desktop layout so it
+      // can't re-resolve. Grid track count + flex direction decide stacked-vs-
+      // side-by-side; the container's own width decides column-query outcomes
+      // downstream (e.g. a text column going narrow).
+      if (disp === "grid" || disp === "inline-grid") {
+        const cols = cs.gridTemplateColumns;
+        // Only multi-track grids: single-track/none have nothing to protect and
+        // getComputedStyle drops line names, so pinning them could hurt.
+        if (cols && cols !== "none" && cols.indexOf(" ") !== -1) {
+          const prev = c.getAttribute("style") || "";
+          c.setAttribute("style", prev + (prev ? ";" : "") + "grid-template-columns:" + cols);
+        }
+      } else if (disp === "flex" || disp === "inline-flex") {
+        const prev = c.getAttribute("style") || "";
+        c.setAttribute("style", prev + (prev ? ";" : "") + "flex-direction:" + cs.flexDirection + ";flex-wrap:" + cs.flexWrap);
+      }
+      // Pin the width of query containers themselves, so nested container-query
+      // outcomes (e.g. a narrow text column) resolve to the desktop branch too.
+      if (cs.containerType && cs.containerType !== "normal") {
+        const w = Math.round(o.getBoundingClientRect().width);
+        if (w > 0) {
+          const prev = c.getAttribute("style") || "";
+          c.setAttribute("style", prev + (prev ? ";" : "") + "width:" + w + "px");
         }
       }
     }
