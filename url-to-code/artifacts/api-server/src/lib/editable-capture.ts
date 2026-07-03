@@ -147,6 +147,18 @@ export const EDITABLE_CAPTURE_SCRIPT = String.raw`
   const warnings = [];
   const abs = (ref, base) => { try { return new URL(ref, base || pageUrl).href; } catch { return ref; } };
 
+  // Freeze animations/transitions on the LIVE page before reading any computed
+  // styles. The exported artifact freezes motion the same way, so measuring the
+  // page in its frozen state is what makes the per-element snapshots accurate.
+  // Crucially, it exposes scroll-reveal elements: a fade-in whose end state
+  // (opacity:1) is only held by animation-fill-mode reverts to its base
+  // opacity:0 once animation is off — which is exactly what the clone will show,
+  // and what the opacity-reveal fix below then corrects.
+  const freezeStyle = document.createElement("style");
+  freezeStyle.textContent = "*,*::before,*::after{animation:none!important;transition:none!important}";
+  document.documentElement.appendChild(freezeStyle);
+  void document.body.offsetHeight; // force reflow so computed styles update
+
   // @import is illegal in a constructed sheet; Node already inlined captured
   // imports — strip any stray ones so one can't drop a whole inline sheet.
   const parseSheet = (text) => {
@@ -423,6 +435,25 @@ export const EDITABLE_CAPTURE_SCRIPT = String.raw`
       if (SAFE.indexOf(disp) === -1) {
         const prev = c.getAttribute("style") || "";
         c.setAttribute("style", prev + (prev ? ";" : "") + "display:" + disp);
+      }
+
+      // Scroll-reveal fix. Fade-in-on-scroll elements start at opacity:0 and are
+      // revealed by JS (IntersectionObserver toggling a class) or by an
+      // animation that ends at opacity:1. With JS stripped and animations
+      // frozen, they stay invisible — a very common cause of whole sections /
+      // nav rows / cards silently missing on modern sites (Apple, etc.). Force
+      // them visible when they carry real content and sit in normal flow
+      // (static/relative). Absolutely/fixed-positioned opacity:0 nodes are left
+      // alone: those are usually legitimate overlays (dropdowns, tooltips,
+      // stacked carousel slides) that should stay hidden.
+      if (cs.opacity === "0" && disp !== "none" && (cs.position === "static" || cs.position === "relative")) {
+        const rect = o.getBoundingClientRect();
+        const hasContent = (o.textContent && o.textContent.trim().length > 0) ||
+          o.querySelector("img,svg,picture,video,canvas");
+        if (rect.width > 1 && rect.height > 1 && hasContent) {
+          const prev = c.getAttribute("style") || "";
+          c.setAttribute("style", prev + (prev ? ";" : "") + "opacity:1");
+        }
       }
     }
 
