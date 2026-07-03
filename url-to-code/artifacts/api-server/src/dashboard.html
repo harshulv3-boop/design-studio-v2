@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Clone → Edit · Local Control Panel</title>
+<style>
+  :root{
+    --bg:#0b0f17; --panel:#141a26; --panel2:#1b2333; --line:#26324a;
+    --ink:#e8edf6; --muted:#8b98af; --brand:#635bff; --brand2:#00d4ff;
+    --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+    background:radial-gradient(1200px 600px at 50% -10%,rgba(99,91,255,.12),transparent 60%),var(--bg);
+    color:var(--ink);line-height:1.5;min-height:100vh}
+  a{color:inherit}
+  .wrap{max-width:1080px;margin:0 auto;padding:28px 24px 64px}
+  header.top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:24px}
+  .brand{display:flex;align-items:center;gap:12px;font-weight:800;font-size:19px;letter-spacing:-.3px}
+  .brand .logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--brand),var(--brand2));
+    box-shadow:0 8px 22px -6px rgba(99,91,255,.6)}
+  .sub{color:var(--muted);font-size:13px;font-weight:500}
+  .grid-status{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:22px}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);
+    border-radius:var(--radius);padding:16px 18px}
+  .svc{display:flex;align-items:center;justify-content:space-between}
+  .svc .name{font-weight:700;font-size:14px}
+  .svc .port{color:var(--muted);font-size:12px;font-family:ui-monospace,Menlo,monospace}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--muted);display:inline-block;margin-right:7px;
+    box-shadow:0 0 0 0 rgba(0,0,0,0)}
+  .dot.up{background:var(--ok);box-shadow:0 0 12px 1px rgba(34,197,94,.6)}
+  .dot.down{background:var(--err)}
+  .pill{font-size:11px;color:var(--muted);margin-top:8px}
+  .svc-actions{margin-top:10px;display:flex;gap:8px}
+  .btn{appearance:none;border:0;cursor:pointer;border-radius:999px;font-weight:700;font-size:13px;
+    padding:9px 16px;color:#fff;background:var(--brand);transition:transform .12s,filter .12s;text-decoration:none;display:inline-flex;align-items:center;gap:8px}
+  .btn:hover{transform:translateY(-1px);filter:brightness(1.08)}
+  .btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+  .btn.sm{padding:6px 12px;font-size:12px}
+  .clone{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);
+    border-radius:18px;padding:20px;margin-bottom:22px}
+  .clone h2{margin:0 0 4px;font-size:16px}
+  .clone .hint{color:var(--muted);font-size:13px;margin-bottom:14px}
+  .inrow{display:flex;gap:10px}
+  .inrow input{flex:1;background:#0d1320;border:1px solid var(--line);border-radius:11px;color:var(--ink);
+    padding:13px 15px;font-size:15px;font-family:ui-monospace,Menlo,monospace}
+  .inrow input:focus{outline:none;border-color:var(--brand)}
+  .job{margin-top:16px;border-top:1px solid var(--line);padding-top:16px;display:none}
+  .job.show{display:block}
+  .bar{height:8px;border-radius:999px;background:#0d1320;overflow:hidden;margin:10px 0}
+  .bar > i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--brand),var(--brand2));transition:width .5s}
+  .jobmeta{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);font-family:ui-monospace,Menlo,monospace}
+  .result{display:none;margin-top:16px;gap:12px}
+  .result.show{display:grid;grid-template-columns:1fr 1fr}
+  .opt{background:#0d1320;border:1px solid var(--line);border-radius:13px;padding:16px;display:flex;flex-direction:column;gap:8px}
+  .opt h3{margin:0;font-size:14px;display:flex;align-items:center;gap:8px}
+  .opt p{margin:0;color:var(--muted);font-size:12px}
+  .badge{display:inline-block;font-size:11px;padding:3px 9px;border-radius:999px;background:rgba(99,91,255,.16);
+    color:#b9b4ff;font-weight:700}
+  .badge.ok{background:rgba(34,197,94,.16);color:#86efac}
+  .badge.warn{background:rgba(245,158,11,.16);color:#fcd34d}
+  .preview{margin-top:20px;display:none}
+  .preview.show{display:block}
+  .preview-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  .preview-head .tabs{display:flex;gap:6px}
+  .tab{font-size:12px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);cursor:pointer;color:var(--muted)}
+  .tab.active{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .stage{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;position:relative;height:520px}
+  .stage iframe{border:0;background:#fff;transform-origin:top left}
+  .stage img{display:block;width:100%}
+  .stage .scroll{position:absolute;inset:0;overflow:auto}
+  .jobs{margin-top:24px}
+  .jobs h2{font-size:15px;margin:0 0 10px}
+  .joblist{display:flex;flex-direction:column;gap:8px}
+  .jrow{display:flex;align-items:center;justify-content:space-between;background:var(--panel);border:1px solid var(--line);
+    border-radius:11px;padding:10px 14px;font-size:13px}
+  .jrow .u{font-family:ui-monospace,Menlo,monospace;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:52%}
+  .jrow .meta{color:var(--muted);font-size:12px;display:flex;gap:10px;align-items:center}
+  footer{margin-top:34px;color:var(--muted);font-size:12px;text-align:center}
+  .empty{color:var(--muted);font-size:13px;padding:10px 0}
+  .err{color:#fca5a5;font-size:13px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><span class="logo"></span> Clone → Edit <span class="sub">· Local Control Panel</span></div>
+    <div class="sub" id="clock"></div>
+  </header>
+
+  <section class="grid-status">
+    <div class="card">
+      <div class="svc"><div class="name"><span class="dot" id="dot-engine"></span>Clone Engine</div><div class="port">:8081</div></div>
+      <div class="pill" id="pill-engine">checking…</div>
+      <div class="svc-actions"><a class="btn ghost sm" id="link-engine" href="#" target="_blank" rel="noopener">API health</a></div>
+    </div>
+    <div class="card">
+      <div class="svc"><div class="name"><span class="dot" id="dot-studio"></span>App Design Studio</div><div class="port">:8080</div></div>
+      <div class="pill" id="pill-studio">checking…</div>
+      <div class="svc-actions"><a class="btn sm" id="link-studio" href="#" target="_blank" rel="noopener">Open Studio ↗</a></div>
+    </div>
+    <div class="card">
+      <div class="svc"><div class="name"><span class="dot up"></span>Dashboard</div><div class="port" id="dash-origin">:8090</div></div>
+      <div class="pill">Serving this control panel</div>
+      <div class="svc-actions"><a class="btn ghost sm" href="./RUN_LOCAL.md" onclick="return false" title="See RUN_LOCAL.md in the design folder">Docs</a></div>
+    </div>
+  </section>
+
+  <section class="clone">
+    <h2>Clone a website</h2>
+    <div class="hint">Enter a public URL. The engine captures it, produces the interactive ZIP and the editable (JS-free) version, then you can download it or open it in the editor.</div>
+    <div class="inrow">
+      <input id="url" type="text" placeholder="https://stripe.com" autocomplete="off" spellcheck="false" />
+      <button class="btn" id="go">Clone Website</button>
+    </div>
+    <div class="err" id="startErr"></div>
+
+    <div class="job" id="job">
+      <div class="jobmeta"><span id="jobUrl"></span><span id="jobPct">0%</span></div>
+      <div class="bar"><i id="bar"></i></div>
+      <div class="jobmeta"><span id="jobMsg">…</span><span id="jobStatus"></span></div>
+
+      <div class="result" id="result">
+        <a class="opt" id="downloadOpt" href="#" download>
+          <h3>⬇ Download Website</h3>
+          <p>Interactive ZIP — JavaScript, animations & navigation intact. The production/export version.</p>
+          <span class="badge" id="zipBadge">ready</span>
+        </a>
+        <div class="opt">
+          <h3>✎ Edit Design</h3>
+          <p>The JS-free, visually-identical version, opened in the canvas editor.</p>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <span class="badge ok" id="sizeBadge">—</span>
+            <button class="btn sm" id="previewBtn">Preview here</button>
+            <a class="btn sm ghost" id="editorBtn" href="#" target="_blank" rel="noopener">Open in Studio ↗</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="preview" id="preview">
+      <div class="preview-head">
+        <div class="sub">Editable version — this is what the editor renders (no JS)</div>
+        <div class="tabs">
+          <div class="tab active" id="tab-editable" data-tab="editable">Editable (no JS)</div>
+          <div class="tab" id="tab-ref" data-tab="ref">Reference screenshot</div>
+        </div>
+      </div>
+      <div class="stage"><div class="scroll" id="stageScroll"></div></div>
+    </div>
+  </section>
+
+  <section class="jobs">
+    <h2>Recent clones <span class="sub">(this session)</span></h2>
+    <div class="joblist" id="joblist"><div class="empty">No clones yet.</div></div>
+  </section>
+
+  <footer>Local control panel · Clone → Edit pipeline · engine :8081 · studio :8080</footer>
+</div>
+
+<script>
+// ---- config: engine + studio origins (override with ?engine=&studio=) ----
+const qs = new URLSearchParams(location.search);
+const httpOrigin = /^https?:$/.test(location.protocol) ? location.origin : "";
+const ENGINE = (qs.get("engine") || httpOrigin || "http://localhost:8081").replace(/\/$/,"");
+const STUDIO = (qs.get("studio") || "http://localhost:8080").replace(/\/$/,"");
+const API = ENGINE + "/api";
+document.getElementById("link-engine").href = API + "/healthz";
+document.getElementById("link-studio").href = STUDIO + "/";
+document.getElementById("editorBtn").href = STUDIO + "/";
+document.getElementById("dash-origin").textContent = location.port ? (":" + location.port) : location.origin;
+
+const el = (id) => document.getElementById(id);
+const jobs = [];
+let current = null;      // { jobId, url }
+let editableCache = null;
+
+// ---- clock ----
+setInterval(() => { el("clock").textContent = new Date().toLocaleTimeString(); }, 1000);
+
+// ---- health polling ----
+async function pingEngine(){
+  try{
+    const r = await fetch(API + "/healthz", { cache:"no-store" });
+    const ok = r.ok; setDot("engine", ok, ok ? "Online · ready to clone" : "Reachable but unhealthy");
+  }catch{ setDot("engine", false, "Not running — start the engine (:8081)"); }
+}
+async function pingStudio(){
+  // studio is a different origin without CORS; use no-cors reachability probe
+  try{
+    await fetch(STUDIO + "/", { mode:"no-cors", cache:"no-store" });
+    setDot("studio", true, "Online — click Open Studio");
+  }catch{ setDot("studio", false, "Not running — start the studio (:8080)"); }
+}
+function setDot(svc, up, msg){
+  const d = el("dot-"+svc); d.className = "dot " + (up ? "up" : "down");
+  el("pill-"+svc).textContent = msg;
+}
+pingEngine(); pingStudio();
+setInterval(pingEngine, 4000);
+setInterval(pingStudio, 6000);
+
+// ---- clone flow ----
+el("go").addEventListener("click", startClone);
+el("url").addEventListener("keydown", (e)=>{ if(e.key==="Enter") startClone(); });
+
+async function startClone(){
+  const url = el("url").value.trim();
+  el("startErr").textContent = "";
+  if(!url){ el("startErr").textContent = "Enter a URL first."; return; }
+  el("go").disabled = true; el("go").textContent = "Starting…";
+  resetJobUI(url);
+  try{
+    const r = await fetch(API + "/clone/start", {
+      method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ url })
+    });
+    const data = await r.json();
+    if(!r.ok || !data.jobId) throw new Error(data.error || ("HTTP " + r.status));
+    current = { jobId: data.jobId, url };
+    poll();
+  }catch(err){
+    el("startErr").textContent = "Could not start: " + err.message + "  — is the engine running on :8081?";
+    el("go").disabled = false; el("go").textContent = "Clone Website";
+    el("job").classList.remove("show");
+  }
+}
+
+function resetJobUI(url){
+  el("job").classList.add("show");
+  el("result").classList.remove("show");
+  el("preview").classList.remove("show");
+  el("jobUrl").textContent = url;
+  el("jobPct").textContent = "0%";
+  el("bar").style.width = "0%";
+  el("jobMsg").textContent = "Queued…";
+  el("jobStatus").textContent = "pending";
+  editableCache = null;
+}
+
+async function poll(){
+  if(!current) return;
+  try{
+    const r = await fetch(API + "/clone/" + current.jobId + "/status", { cache:"no-store" });
+    const s = await r.json();
+    const pct = s.progress || 0;
+    el("jobPct").textContent = pct + "%";
+    el("bar").style.width = pct + "%";
+    el("jobMsg").textContent = s.message || "";
+    el("jobStatus").textContent = s.status;
+    if(s.status === "done"){ onDone(s); return; }
+    if(s.status === "error"){ onError(s); return; }
+    setTimeout(poll, 1400);
+  }catch(err){
+    el("jobMsg").textContent = "Lost connection to engine — retrying…";
+    setTimeout(poll, 2000);
+  }
+}
+
+function onDone(s){
+  el("go").disabled = false; el("go").textContent = "Clone Website";
+  el("result").classList.add("show");
+  el("downloadOpt").href = API + "/clone/" + current.jobId + "/download";
+  const kb = s.editableSize ? Math.round(s.editableSize/1024) : null;
+  const sizeBadge = el("sizeBadge");
+  if(kb != null){
+    sizeBadge.textContent = kb + " KB";
+    sizeBadge.className = "badge " + (kb <= 1024 ? "ok" : "warn");
+  } else { sizeBadge.textContent = s.editableReady ? "ready" : "n/a"; }
+  el("previewBtn").disabled = !s.editableReady;
+  addJob({ ...current, status:"done", kb });
+}
+function onError(s){
+  el("go").disabled = false; el("go").textContent = "Clone Website";
+  el("startErr").textContent = "Clone failed: " + (s.message || "unknown error");
+  addJob({ ...current, status:"error" });
+}
+
+// ---- preview (inline render of the editable version, like the editor) ----
+el("previewBtn").addEventListener("click", showPreview);
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => switchTab(t.dataset.tab)));
+
+async function showPreview(){
+  if(!current) return;
+  el("preview").classList.add("show");
+  switchTab("editable");
+  if(!editableCache){
+    el("stageScroll").innerHTML = '<div style="padding:20px;color:#888;font:14px sans-serif">Loading editable version…</div>';
+    try{
+      const r = await fetch(API + "/clone/" + current.jobId + "/editable", { cache:"no-store" });
+      if(!r.ok) throw new Error("HTTP " + r.status);
+      editableCache = await r.json();
+    }catch(err){
+      el("stageScroll").innerHTML = '<div style="padding:20px;color:#c00;font:14px sans-serif">Could not load editable: ' + err.message + '</div>';
+      return;
+    }
+  }
+  renderEditable(editableCache);
+}
+
+function renderEditable(ed){
+  // Reproduce the studio's render: css in <style>, body content inside .screen.
+  // The engine already rewrote html/body/:root selectors to .screen.
+  const fw = ed.frameWidth || 1440;
+  const doc = '<!doctype html><html><head><meta charset="utf-8"><style>'
+    + 'html,body{margin:0;padding:0}.screen{display:block;width:' + fw + 'px}'
+    + (ed.css || "")
+    + '</style></head><body><div class="screen" data-screen-id="home">' + (ed.html || "") + '</div></body></html>';
+  const stage = el("stageScroll");
+  const stageW = stage.clientWidth || 1000;
+  const scale = Math.min(1, stageW / fw);
+  stage.innerHTML = "";
+  const frame = document.createElement("iframe");
+  frame.style.width = fw + "px";
+  frame.style.height = Math.round((ed.pageHeight || 3000)) + "px";
+  frame.style.transform = "scale(" + scale + ")";
+  frame.setAttribute("sandbox", "allow-same-origin"); // no scripts — proves JS-free
+  stage.appendChild(frame);
+  frame.contentDocument.open(); frame.contentDocument.write(doc); frame.contentDocument.close();
+}
+
+function switchTab(which){
+  el("tab-editable").classList.toggle("active", which==="editable");
+  el("tab-ref").classList.toggle("active", which==="ref");
+  if(which==="ref"){
+    const stage = el("stageScroll");
+    stage.innerHTML = "";
+    const img = document.createElement("img");
+    img.src = API + "/clone/" + current.jobId + "/screenshot";
+    img.alt = "reference screenshot";
+    stage.appendChild(img);
+  } else if(editableCache){
+    renderEditable(editableCache);
+  }
+}
+
+// ---- recent jobs ----
+function addJob(j){
+  jobs.unshift({ ...j, at: new Date() });
+  const list = el("joblist");
+  list.innerHTML = "";
+  if(jobs.length === 0){ list.innerHTML = '<div class="empty">No clones yet.</div>'; return; }
+  jobs.slice(0,8).forEach(job => {
+    const row = document.createElement("div"); row.className = "jrow";
+    const badge = job.status === "done"
+      ? '<span class="badge ok">done' + (job.kb != null ? " · " + job.kb + " KB" : "") + '</span>'
+      : '<span class="badge warn">error</span>';
+    row.innerHTML = '<span class="u">' + job.url + '</span>'
+      + '<span class="meta">' + badge + '<span>' + job.at.toLocaleTimeString() + '</span>'
+      + (job.status==="done" ? '<a class="btn sm ghost" href="' + API + "/clone/" + job.jobId + '/download" download>ZIP</a>' : '')
+      + '</span>';
+    list.appendChild(row);
+  });
+}
+</script>
+</body>
+</html>

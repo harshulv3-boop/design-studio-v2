@@ -1,0 +1,239 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: clone
+    description: Website cloning operations
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /clone/start:
+    post:
+      operationId: startClone
+      tags: [clone]
+      summary: Start a website clone job
+      description: Initiates a Playwright-based full-page website clone
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloneInput"
+      responses:
+        "201":
+          description: Clone job started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloneJob"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /clone/{jobId}/status:
+    get:
+      operationId: getCloneStatus
+      tags: [clone]
+      summary: Get clone job status
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Clone job status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloneStatus"
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /clone/{jobId}/download:
+    get:
+      operationId: downloadClone
+      tags: [clone]
+      summary: Download the cloned website as a zip
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Zip file download
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Job not found or not done
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+
+  /clone/{jobId}/editable:
+    get:
+      operationId: getCloneEditable
+      tags: [clone]
+      summary: Get the editable (JS-free, canvas-ready) artifact
+      description: JS-free post-render snapshot with flattened CSS for App Design Studio
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Editable artifact
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EditableArtifact"
+        "404":
+          description: Job not found or editable not available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /clone/{jobId}/screenshot:
+    get:
+      operationId: getCloneScreenshot
+      tags: [clone]
+      summary: Full-page reference screenshot (fidelity QA)
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: PNG screenshot
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Not available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
+    CloneInput:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          description: The URL of the website to clone
+
+    CloneJob:
+      type: object
+      required: [jobId, status]
+      properties:
+        jobId:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, done, error]
+
+    CloneStatus:
+      type: object
+      required: [jobId, status, progress]
+      properties:
+        jobId:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, done, error]
+        progress:
+          type: integer
+          description: Progress 0-100
+        message:
+          type: ["string", "null"]
+        url:
+          type: ["string", "null"]
+        downloadReady:
+          type: boolean
+        editableReady:
+          type: boolean
+        editableSize:
+          type: ["integer", "null"]
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    EditableArtifact:
+      type: object
+      required: [sourceUrl, title, frameWidth, html, css]
+      properties:
+        sourceUrl:
+          type: string
+        title:
+          type: string
+        frameWidth:
+          type: integer
+        pageHeight:
+          type: integer
+        html:
+          type: string
+        css:
+          type: string
+        warnings:
+          type: array
+          items:
+            type: string
+        capturedAt:
+          type: integer

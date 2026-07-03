@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "Website Cloner"
+version = "1.0.0"
+id = "artifacts/site-cloner"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22287
+
+[services.development]
+run = "pnpm --filter @workspace/site-cloner run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/site-cloner", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/site-cloner/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22287"
+BASE_PATH = "/"

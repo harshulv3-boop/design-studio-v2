@@ -1,0 +1,2 @@
+- [Playwright on Replit NixOS](playwright-nixos.md) — Chromium headless needs ~20 system libs installed; JSZip beats archiver for zipping in ESM bundles
+- [Archiver CJS in ESM bundle](playwright-nixos.md) — never use archiver in esbuild ESM output; use JSZip (pure ESM) instead even with createRequire workaround
