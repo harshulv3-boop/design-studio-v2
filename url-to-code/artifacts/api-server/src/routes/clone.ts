@@ -388,10 +388,26 @@ async function runClone(job: Job, targetUrl: string) {
     job.message = "Rewriting URLs in HTML...";
     job.progress = 70;
 
+    // Make the downloaded page actually work on ANY site. Most sites reference
+    // CSS/JS/images with relative or root-relative paths (href="/_next/app.css",
+    // src="./bundle.js"); the old approach only string-replaced fully-qualified
+    // URLs, so those refs were never rewritten and the page loaded with no CSS
+    // or JS. A single <base href="origin/"> resolves every relative URL back to
+    // the live origin at once — stylesheets, scripts, fonts, images, and the
+    // page's own fetch()/navigation — keeping JS and interactivity intact for
+    // every site, not just ones that happen to use absolute URLs.
     let processedHtml = rawHtml;
-    for (const [originalUrl, localPath] of assetMap) {
-      const escaped = originalUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      processedHtml = processedHtml.replace(new RegExp(escaped, "g"), localPath);
+    const origin = new URL(targetUrl).origin + "/";
+    const baseTag = `<base href="${origin}">`;
+    // Drop any pre-existing <base> (it would override ours), then insert ours
+    // as the first thing in <head> so it applies before any resource ref.
+    processedHtml = processedHtml.replace(/<base\b[^>]*>/gi, "");
+    if (/<head[^>]*>/i.test(processedHtml)) {
+      processedHtml = processedHtml.replace(/<head[^>]*>/i, (m) => m + "\n    " + baseTag);
+    } else if (/<html[^>]*>/i.test(processedHtml)) {
+      processedHtml = processedHtml.replace(/<html[^>]*>/i, (m) => m + "<head>" + baseTag + "</head>");
+    } else {
+      processedHtml = baseTag + processedHtml;
     }
 
     job.message = "Creating zip archive...";
@@ -399,6 +415,16 @@ async function runClone(job: Job, targetUrl: string) {
 
     const zip = new JSZip();
     zip.file("index.html", processedHtml);
+    // README so it's clear the page streams its assets from the origin.
+    zip.file(
+      "README.txt",
+      `Cloned from ${targetUrl}\n\n` +
+        `index.html renders the captured page and loads its CSS/JS/images/fonts\n` +
+        `from the original site (via a <base> tag), so JS and interactivity stay\n` +
+        `intact. Open it in a browser while online. The /assets folder contains\n` +
+        `the resources captured at clone time for reference/offline work.\n`,
+    );
+    // Still bundle the captured assets for reference / offline tinkering.
     const assetsFolder = zip.folder("assets")!;
     const assetFiles = fs.readdirSync(assetsDir);
     for (const filename of assetFiles) {
