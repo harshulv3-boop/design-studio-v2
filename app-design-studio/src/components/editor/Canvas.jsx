@@ -130,6 +130,12 @@ export default function Canvas() {
   // THIS element's scrollTop (never the whole screen) is what keeps the header
   // and tab bar pinned, exactly like a native phone.
   const findScrollEl = useCallback(() => {
+    // Websites render at full height (root overflow:visible / height:auto) and
+    // are navigated by panning the canvas, not by an in-frame scroll region.
+    // The below-the-fold scroll model is a phone concept (pinned header/tab bar
+    // with a scrolling middle); running it on a website picks up some inner
+    // overflow container and shows a bogus scrollbar beside the frame.
+    if (isWebsite) return null;
     const page = pageRef.current;
     if (!page) return null;
     let best = null;
@@ -144,9 +150,13 @@ export default function Canvas() {
       }
     });
     return best;
-  }, []);
+  }, [isWebsite]);
 
   const measureScroll = useCallback(() => {
+    if (isWebsite) {
+      setMaxScroll(0);
+      return;
+    }
     const el = scrollTargetRef.current;
     if (!el || !pageRef.current?.contains(el)) {
       setMaxScroll(0);
@@ -159,7 +169,7 @@ export default function Canvas() {
       el.scrollTop = max;
       setScrollY(max);
     }
-  }, []);
+  }, [isWebsite]);
 
   // Set the content region's scroll position, then recompute overlays so
   // selection boxes / handles / guides track the moved elements (they all read

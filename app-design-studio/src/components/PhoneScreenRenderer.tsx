@@ -1,4 +1,13 @@
-import { useLayoutEffect, useRef, type CSSProperties, type MouseEventHandler, type MutableRefObject, type ReactNode, type Ref } from "react";
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type CSSProperties,
+  type MouseEventHandler,
+  type MutableRefObject,
+  type ReactNode,
+  type Ref,
+} from "react";
 import DOMPurify from "dompurify";
 
 type Platform = "ios" | "android";
@@ -173,6 +182,13 @@ export function PhoneScreenRenderer({
 
   const resolvedWidth = isWebsite && frameWidth ? frameWidth : PHONE_FRAME.width;
 
+  // Scoping the design-system CSS runs a regex over the entire stylesheet,
+  // which for cloned websites can be ~500KB. PhoneScreenRenderer re-renders on
+  // every canvas interaction (selection, hover, zoom, pan), so recomputing this
+  // inline was the dominant source of Pro-mode editing lag. Memoize on `css`
+  // alone so it only recomputes when the stylesheet actually changes.
+  const scopedCss = useMemo(() => (css ? scopedPhoneScreenCss(css) : ""), [css]);
+
   return (
     <div
       ref={(node) => assignRef(rootRef, node)}
@@ -208,13 +224,13 @@ export function PhoneScreenRenderer({
         data-testid="canvas-page"
         data-phone-screen-page
       />
-      {css && (
+      {scopedCss && (
         <style
           data-phone-screen-css
           // Not part of the editable HTML — sibling of the page container,
           // so Pro commits only the screen document, not the renderer CSS.
           // eslint-disable-next-line react/no-danger
-          dangerouslySetInnerHTML={{ __html: scopedPhoneScreenCss(css) }}
+          dangerouslySetInnerHTML={{ __html: scopedCss }}
         />
       )}
       {/* Interactive overlay layer (Pro selection boxes / drag+resize handles /
