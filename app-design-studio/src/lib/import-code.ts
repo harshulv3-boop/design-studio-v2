@@ -33,10 +33,10 @@ export type LanguageDef = {
 export const LANGUAGES: LanguageDef[] = [
   { id: "html", label: "HTML / CSS", exts: [".html", ".htm"], kind: "client", available: true },
   { id: "react", label: "React (JSX/TSX)", exts: [".jsx", ".tsx"], kind: "server", available: true },
+  { id: "vue", label: "Vue", exts: [".vue"], kind: "server", available: true },
+  { id: "angular", label: "Angular", exts: [".component.ts"], kind: "server", available: true },
   // Coming soon — wire a parser (client) or an /api/import-code handler (server)
   // and flip `available` to true; nothing else needs to change.
-  { id: "vue", label: "Vue", exts: [".vue"], kind: "server", available: false },
-  { id: "angular", label: "Angular", exts: [".component.ts"], kind: "server", available: false },
   { id: "flutter", label: "Flutter", exts: [".dart"], kind: "server", available: false },
   { id: "swiftui", label: "SwiftUI", exts: [".swift"], kind: "server", available: false },
 ];
@@ -53,6 +53,10 @@ export function languageForFile(filename: string): LanguageId | null {
 export function detectLanguage(code: string): LanguageId {
   const t = code.trim();
   if (!t) return "html";
+  // Angular: the @Component decorator is unambiguous.
+  if (/@Component\s*\(/.test(t)) return "angular";
+  // Vue SFC: a <template> block paired with a <script>.
+  if (/<template[\s>]/.test(t) && /<script[\s>]/.test(t)) return "vue";
   // React signals: JSX imports/exports, hooks, or a component returning JSX.
   const reactHints = [
     /import\s+.*from\s+['"]react['"]/,
