@@ -139,11 +139,47 @@ async function runClone(job: Job, targetUrl: string) {
     // (comma-separated) for sandbox flags like --no-sandbox when required.
     const execPath = process.env.CLONE_CHROMIUM_PATH || undefined;
     const extraArgs = (process.env.CLONE_CHROMIUM_ARGS || "").split(",").map((a) => a.trim()).filter(Boolean);
-    browser = await chromium.launch({ headless: true, executablePath: execPath, args: extraArgs });
+    // Anti-bot-detection ("stealth"). Many sites serve an error/challenge page
+    // to headless browsers; the biggest tell is the automation flag, which this
+    // arg + the init script below hide. This is best-effort — it unblocks a lot
+    // of ordinary bot-protected sites, but not those with advanced fingerprinting
+    // (some Meta properties, Cloudflare hard challenges) which may still error.
+    browser = await chromium.launch({
+      headless: true,
+      executablePath: execPath,
+      args: ["--disable-blink-features=AutomationControlled", ...extraArgs],
+    });
+    const UA =
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
     const context = await browser.newContext({
       viewport: { width: 1536, height: 960 },
-      userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      userAgent: UA,
+      locale: "en-US",
+      timezoneId: "America/New_York",
+      extraHTTPHeaders: {
+        "Accept-Language": "en-US,en;q=0.9",
+        "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "Upgrade-Insecure-Requests": "1",
+      },
+    });
+    // Patch the runtime fingerprints headless Chrome gives away, on every frame.
+    await context.addInitScript(() => {
+      try { Object.defineProperty(navigator, "webdriver", { get: () => false }); } catch { /* ignore */ }
+      try { Object.defineProperty(navigator, "languages", { get: () => ["en-US", "en"] }); } catch { /* ignore */ }
+      try { Object.defineProperty(navigator, "plugins", { get: () => [1, 2, 3, 4, 5] }); } catch { /* ignore */ }
+      try { (window as unknown as { chrome?: unknown }).chrome ??= { runtime: {} }; } catch { /* ignore */ }
+      try {
+        const perms = navigator.permissions;
+        if (perms && perms.query) {
+          const original = perms.query.bind(perms);
+          perms.query = (desc: PermissionDescriptor) =>
+            desc && desc.name === "notifications"
+              ? Promise.resolve({ state: Notification.permission } as PermissionStatus)
+              : original(desc);
+        }
+      } catch { /* ignore */ }
     });
 
     // Intercept and capture all resources (acao retained so the editable

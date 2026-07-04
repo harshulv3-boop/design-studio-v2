@@ -432,6 +432,34 @@ export const EDITABLE_CAPTURE_SCRIPT = String.raw`
       if (href && !href.startsWith("#")) c.setAttribute("href", abs(href));
     }
 
+    // Freeze the size of every <svg>. Icon systems (YouTube, many component
+    // libs) give the svg an inline width:100%/height:100% and rely on a sized
+    // parent (an icon button, a web-component host) to keep it small. When that
+    // parent's size doesn't resolve the same way in the editor, the svg balloons
+    // to full width. Pin a definite pixel size: the live rendered size, or —
+    // when the icon wasn't rendered at capture (empty states, logged-out) —
+    // its width/height attributes or viewBox. Strip the inline 100%/auto so
+    // there's no conflict. (tagName is "svg" for roots; children stay untouched.)
+    if (tag === "svg") {
+      let w = 0, h = 0;
+      const r = o.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) { w = Math.round(r.width); h = Math.round(r.height); }
+      if (!w || !h) {
+        const aw = parseFloat(c.getAttribute("width") || ""), ah = parseFloat(c.getAttribute("height") || "");
+        if (aw > 0 && ah > 0) { w = aw; h = ah; }
+      }
+      if (!w || !h) {
+        const vb = (c.getAttribute("viewBox") || "").split(/[\s,]+/).map(Number);
+        if (vb.length === 4 && vb[2] > 0 && vb[3] > 0) { w = vb[2]; h = vb[3]; }
+      }
+      if (w > 0 && h > 0) {
+        let st = (c.getAttribute("style") || "")
+          .replace(/(^|;)\s*(width|height)\s*:\s*(100%|auto)\s*(?=;|$)/gi, "$1")
+          .replace(/;;+/g, ";").replace(/^;|;$/g, "");
+        c.setAttribute("style", st + (st ? ";" : "") + "width:" + w + "px;height:" + h + "px");
+      }
+    }
+
     // Freeze the computed display at the 1440-px capture viewport.
     // The CSS tree-shaker unwraps @media rules and drops @layer wrappers,
     // which can corrupt cascade order: a mobile-first display:none default
