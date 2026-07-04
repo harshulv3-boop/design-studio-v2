@@ -213,8 +213,12 @@ export const EDITABLE_CAPTURE_SCRIPT = String.raw`
       if (t === "CSSFontFaceRule") { out.push(rule.cssText); kept++; continue; }
       if (t === "CSSStyleRule") {
         const selList = rule.selectorText.split(",");
-        const alive = selList.filter(selectorMatches);
-        if (alive.length === 0) { shaken++; continue; }
+        // Fidelity-first: keep ALL rules (no tree-shaking). Tree-shaking dropped
+        // any rule whose selector didn't currently match the DOM, which was the
+        // main source of missing styles (shadow content, complex/escaped
+        // selectors, states). Keeping the full stylesheet gives the editor the
+        // same cascade the real site uses; rules that don't match are harmless.
+        const alive = selList;
         const touchesRoot = /(^|[^\w-])(:root|html|body)(?![\w-])/i.test(rule.selectorText);
         let body;
         if (touchesRoot) {
