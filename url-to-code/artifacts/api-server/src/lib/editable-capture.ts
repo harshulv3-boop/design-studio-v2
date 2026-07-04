@@ -476,22 +476,26 @@ export const EDITABLE_CAPTURE_SCRIPT = String.raw`
         c.setAttribute("style", prev + (prev ? ";" : "") + "display:" + disp);
       }
 
-      // Scroll-reveal fix. Fade-in-on-scroll elements start at opacity:0 and are
-      // revealed by JS (IntersectionObserver toggling a class) or by an
-      // animation that ends at opacity:1. With JS stripped and animations
-      // frozen, they stay invisible — a very common cause of whole sections /
-      // nav rows / cards silently missing on modern sites (Apple, etc.). Force
-      // them visible when they carry real content and sit in normal flow
-      // (static/relative). Absolutely/fixed-positioned opacity:0 nodes are left
+      // Scroll-reveal fix. Reveal-on-scroll elements start hidden — via
+      // opacity:0 OR visibility:hidden — and are shown by JS (IntersectionObserver
+      // toggling a class) or an animation. With JS stripped and animations frozen
+      // they stay invisible, which silently drops whole sections / cards / text
+      // on animation-heavy sites (Framer, Webflow, Apple, monad, …). Force them
+      // visible when they carry real content and sit in normal flow
+      // (static/relative). Absolutely/fixed-positioned hidden nodes are left
       // alone: those are usually legitimate overlays (dropdowns, tooltips,
       // stacked carousel slides) that should stay hidden.
-      if (cs.opacity === "0" && disp !== "none" && (cs.position === "static" || cs.position === "relative")) {
+      if ((cs.opacity === "0" || cs.visibility === "hidden") &&
+          disp !== "none" && (cs.position === "static" || cs.position === "relative")) {
         const rect = o.getBoundingClientRect();
         const hasContent = (o.textContent && o.textContent.trim().length > 0) ||
           o.querySelector("img,svg,picture,video,canvas");
         if (rect.width > 1 && rect.height > 1 && hasContent) {
+          let extra = "";
+          if (cs.opacity === "0") extra += ";opacity:1";
+          if (cs.visibility === "hidden") extra += ";visibility:visible";
           const prev = c.getAttribute("style") || "";
-          c.setAttribute("style", prev + (prev ? ";" : "") + "opacity:1");
+          c.setAttribute("style", prev + extra);
         }
       }
 
