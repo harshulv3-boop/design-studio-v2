@@ -358,60 +358,72 @@ function AlignButtons({ ids, ops }) {
     if (!root || !ids?.length) return;
     const z = zoom;
 
+    // Each item carries its OWN immediate parent's rect (pr) — the reference
+    // frame for alignment. This is the container the element actually lives in
+    // (a Group, Frame, or the screen), found per element so it's correct at any
+    // nesting depth: elements in a Group align to that Group; a Group selected
+    // inside a bigger Group aligns to the bigger Group; never the phone frame or
+    // some outer ancestor. Exactly like Figma's align-to-parent.
     const items = ids
       .map((id) => {
         const el = root.querySelector(`[data-mae-id="${id}"]`);
         if (!el) return null;
         const r = el.getBoundingClientRect();
         const pr = el.parentElement?.getBoundingClientRect() || r;
-        return { el, r, pr };
+        const curX = parseFloat(el.dataset.maeX || "0");
+        const curY = parseFloat(el.dataset.maeY || "0");
+        return { el, r, pr, curX, curY };
       })
       .filter(Boolean);
-
     if (!items.length) return;
 
-    const isSingle = items.length === 1;
-    const minL = isSingle ? items[0].pr.left  : Math.min(...items.map((i) => i.r.left));
-    const minT = isSingle ? items[0].pr.top   : Math.min(...items.map((i) => i.r.top));
-    const maxR = isSingle ? items[0].pr.right  : Math.max(...items.map((i) => i.r.right));
-    const maxB = isSingle ? items[0].pr.bottom : Math.max(...items.map((i) => i.r.bottom));
-    const cX = (minL + maxR) / 2;
-    const cY = (minT + maxB) / 2;
-
+    // Distribute spreads the SELECTED elements evenly within their own extent
+    // (standard "distribute spacing": outermost stay put, middle ones spaced),
+    // so it's computed once against the selection bounding box.
     const sortedH = [...items].sort((a, b) => a.r.left - b.r.left);
     const sortedV = [...items].sort((a, b) => a.r.top - b.r.top);
+    const selL = Math.min(...items.map((i) => i.r.left));
+    const selT = Math.min(...items.map((i) => i.r.top));
+    const selR = Math.max(...items.map((i) => i.r.right));
+    const selB = Math.max(...items.map((i) => i.r.bottom));
+    if (type === "distribH") {
+      const totalW = sortedH.reduce((s, i) => s + i.r.width, 0);
+      const gap = (selR - selL - totalW) / Math.max(1, sortedH.length - 1);
+      let cursor = selL;
+      sortedH.forEach((it) => { it._tL = cursor; cursor += it.r.width + gap; });
+    } else if (type === "distribV") {
+      const totalH = sortedV.reduce((s, i) => s + i.r.height, 0);
+      const gap = (selB - selT - totalH) / Math.max(1, sortedV.length - 1);
+      let cursor = selT;
+      sortedV.forEach((it) => { it._tT = cursor; cursor += it.r.height + gap; });
+    }
 
-    items.forEach(({ el, r, pr }) => {
-      let tL = r.left;
-      let tT = r.top;
+    items.forEach((item) => {
+      const { el, r, pr, curX, curY } = item;
+      // Target VIEWPORT position for this element's top-left, relative to its
+      // OWN parent (pr) for the 6 align ops.
+      let targetLeft = r.left;
+      let targetTop = r.top;
 
-      if (type === "left")         tL = minL;
-      else if (type === "centerH") tL = cX - r.width / 2;
-      else if (type === "right")   tL = maxR - r.width;
-      else if (type === "top")     tT = minT;
-      else if (type === "centerV") tT = cY - r.height / 2;
-      else if (type === "bottom")  tT = maxB - r.height;
-      else if (type === "distribH") {
-        const totalW = sortedH.reduce((s, i) => s + i.r.width, 0);
-        const gap = (maxR - minL - totalW) / Math.max(1, sortedH.length - 1);
-        let cursor = minL;
-        sortedH.forEach((item) => { item._tL = cursor; cursor += item.r.width + gap; });
-        const me = sortedH.find((i) => i.el === el);
-        if (me?._tL !== undefined) tL = me._tL;
-      } else if (type === "distribV") {
-        const totalH = sortedV.reduce((s, i) => s + i.r.height, 0);
-        const gap = (maxB - minT - totalH) / Math.max(1, sortedV.length - 1);
-        let cursor = minT;
-        sortedV.forEach((item) => { item._tT = cursor; cursor += item.r.height + gap; });
-        const me = sortedV.find((i) => i.el === el);
-        if (me?._tT !== undefined) tT = me._tT;
-      }
+      if (type === "left")         targetLeft = pr.left;
+      else if (type === "centerH") targetLeft = pr.left + (pr.width - r.width) / 2;
+      else if (type === "right")   targetLeft = pr.right - r.width;
+      else if (type === "top")     targetTop = pr.top;
+      else if (type === "centerV") targetTop = pr.top + (pr.height - r.height) / 2;
+      else if (type === "bottom")  targetTop = pr.bottom - r.height;
+      else if (type === "distribH") { if (item._tL !== undefined) targetLeft = item._tL; }
+      else if (type === "distribV") { if (item._tT !== undefined) targetTop = item._tT; }
 
-      const newX = Math.round((tL - pr.left) / z);
-      const newY = Math.round((tT - pr.top) / z);
+      // Delta-based: move by exactly (target - current). This is correct no
+      // matter the element's natural flow position — we don't assume it starts
+      // at the parent's origin. maeX/maeY are translate offsets in screen px.
+      const newX = Math.round(curX + (targetLeft - r.left) / z);
+      const newY = Math.round(curY + (targetTop - r.top) / z);
       el.dataset.maeX = newX;
       el.dataset.maeY = newY;
-      el.style.transform = `translate(${newX}px, ${newY}px)`;
+      const fX = el.dataset.maeFlipX === "1" ? " scaleX(-1)" : "";
+      const fY = el.dataset.maeFlipY === "1" ? " scaleY(-1)" : "";
+      el.style.transform = `translate(${newX}px, ${newY}px)${fX}${fY}`;
     });
 
     ops.commit?.();
