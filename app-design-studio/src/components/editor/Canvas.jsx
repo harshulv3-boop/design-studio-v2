@@ -87,6 +87,36 @@ export default function Canvas() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ---- pan/zoom coalescing -----------------------------------------------
+  // Pointer/wheel pan events fire far faster than the display refreshes (100+/s
+  // on a trackpad). Writing pan/zoom to the store on every raw event forces a
+  // Canvas re-render + full-page transform repaint per event, which is why
+  // moving around a large cloned page stutters. Coalesce all view changes into
+  // one store write per animation frame; successive events within a frame merge
+  // (last-wins for pan, multiplicative for zoom) by reading the pending view.
+  const viewRafRef = useRef(null);
+  const pendingViewRef = useRef(null);
+  const flushView = useCallback(() => {
+    viewRafRef.current = null;
+    const v = pendingViewRef.current;
+    pendingViewRef.current = null;
+    if (!v) return;
+    const s = store();
+    if (v.zoom != null) s.setZoom(v.zoom);
+    if (v.pan) s.setPan(v.pan);
+  }, []);
+  const scheduleView = useCallback((v) => {
+    pendingViewRef.current = { ...(pendingViewRef.current || {}), ...v };
+    if (!viewRafRef.current) viewRafRef.current = requestAnimationFrame(flushView);
+  }, [flushView]);
+  // Latest pending-or-committed view, so events coalesced within a frame build
+  // on each other instead of all reading the same stale committed value.
+  const liveView = useCallback(() => {
+    const s = store();
+    const p = pendingViewRef.current;
+    return { zoom: p?.zoom ?? s.zoom, pan: p?.pan ?? s.pan };
+  }, []);
+
   const store = () => useEditorStore.getState();
   const commit = useCallback(() => {
     if (pageRef.current) store().commitDom(pageRef.current.innerHTML);
@@ -261,10 +291,16 @@ export default function Canvas() {
     });
   }, [hiddenIds, htmlVersion]);
 
+  // Recompute selection rects only when the SELECTION changes — not on pan/zoom.
+  // The selection boxes/handles live inside the transformed page wrapper, so
+  // they already translate & scale with the page for free. Recomputing them on
+  // every pan/zoom tick forced a synchronous layout (getBoundingClientRect) per
+  // frame, which is the main reason moving around the canvas felt heavy on large
+  // cloned pages.
   useEffect(() => {
     recompute();
     measureScroll();
-  }, [selectedIds, zoom, pan, recompute, measureScroll]);
+  }, [selectedIds, recompute, measureScroll]);
 
 
   // Canvas background is applied inline on the viewport div via JSX style below.
@@ -1318,24 +1354,23 @@ export default function Canvas() {
     if (!vp) return;
     const onWheel = (e) => {
       e.preventDefault();
-      const s = store();
+      const { zoom, pan } = liveView();
       if (e.ctrlKey || e.metaKey) {
         const r = vp.getBoundingClientRect();
         const mx = e.clientX - r.left, my = e.clientY - r.top;
         const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-        const nz = clamp(s.zoom * factor, 0.1, 4);
-        const wx = (mx - s.pan.x) / s.zoom, wy = (my - s.pan.y) / s.zoom;
-        s.setZoom(nz);
-        s.setPan({ x: mx - wx * nz, y: my - wy * nz });
+        const nz = clamp(zoom * factor, 0.1, 4);
+        const wx = (mx - pan.x) / zoom, wy = (my - pan.y) / zoom;
+        scheduleView({ zoom: nz, pan: { x: mx - wx * nz, y: my - wy * nz } });
       } else if (e.shiftKey) {
-        s.setPan({ x: s.pan.x - (e.deltaY || e.deltaX), y: s.pan.y });
+        scheduleView({ pan: { x: pan.x - (e.deltaY || e.deltaX), y: pan.y } });
       } else {
-        s.setPan({ x: s.pan.x - e.deltaX, y: s.pan.y - e.deltaY });
+        scheduleView({ pan: { x: pan.x - e.deltaX, y: pan.y - e.deltaY } });
       }
     };
     vp.addEventListener("wheel", onWheel, { passive: false });
     return () => vp.removeEventListener("wheel", onWheel);
-  }, []);
+  }, [liveView, scheduleView]);
 
   // ---- viewport pointer down: pan / marquee / create
   const onViewportPointerDown = (e) => {
@@ -1377,7 +1412,7 @@ export default function Canvas() {
   const onPanMove = (e) => {
     const p = panRef.current;
     if (!p) return;
-    store().setPan({ x: p.px + (e.clientX - p.startX), y: p.py + (e.clientY - p.startY) });
+    scheduleView({ pan: { x: p.px + (e.clientX - p.startX), y: p.py + (e.clientY - p.startY) } });
   };
   const onPanUp = () => {
     panRef.current = null;
@@ -1522,6 +1557,9 @@ export default function Canvas() {
         wrapperStyle={{
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
           transformOrigin: "0 0",
+          // Keep the (large) page on its own GPU layer so pan/zoom is a cheap
+          // composited transform instead of repainting the whole cloned page.
+          willChange: "transform",
         }}
         platform={platform}
         html={html || ""}
