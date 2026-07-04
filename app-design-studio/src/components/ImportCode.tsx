@@ -92,8 +92,13 @@ export default function ImportCode({ onOpenProject }: { onOpenProject: (id: stri
         if (!res.ok || !data?.html) {
           throw new ImportError(data?.error || `Import failed (HTTP ${res.status}).`);
         }
-        html = data.html;
-        css = data.css || "";
+        // Rendered React can carry its styling as an inline <style> (e.g. our own
+        // TSX export embeds DESIGN_SYSTEM_CSS that way). Run it through the same
+        // extractor as the HTML path so the CSS lands in designSystemCss and
+        // renders via the reliable scoped-CSS path — not a fragile inline tag.
+        const parsed = parseHtmlToArtifact(data.html);
+        html = parsed.html;
+        css = [data.css, parsed.css].filter(Boolean).join("\n");
         if (data.warnings?.length) setWarnings(data.warnings);
       }
 
