@@ -1,9 +1,10 @@
 import CloneWebsite from "@/components/CloneWebsite";
+import ImportCode from "@/components/ImportCode";
 import { PhoneScreenFrame } from "@/components/PhoneScreenFrame";
 import { deleteProject, listProjects, type ProjectSummary } from "@/lib/project-store";
 import { TEMPLATES } from "@/lib/templates";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ChevronDown, Clock, Globe, Image as ImageIcon, Layers, Send, Sparkle, Sparkles, Trash2, Zap } from "lucide-react";
+import { ChevronDown, Clock, Code2, Globe, Image as ImageIcon, Layers, Send, Sparkle, Sparkles, Trash2, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export const Route = createFileRoute("/")({
@@ -153,7 +154,7 @@ function Landing() {
   const navigate = useNavigate();
   const [idea, setIdea] = useState("");
   const [platform, setPlatform] = useState<"ios" | "android">("ios");
-  const [creationMode, setCreationMode] = useState<"app" | "clone">("app");
+  const [creationMode, setCreationMode] = useState<"app" | "clone" | "import">("app");
 
   function launch(withIdea: string) {
     if (!withIdea.trim()) return;
@@ -242,11 +243,23 @@ function Landing() {
                   <Globe className="h-3 w-3" />
                   Clone a website
                 </button>
+                <button
+                  onClick={() => setCreationMode("import")}
+                  className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
+                    creationMode === "import" ? "bg-brand text-white" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  data-testid="mode-tab-import"
+                >
+                  <Code2 className="h-3 w-3" />
+                  Import code
+                </button>
               </div>
             </div>
 
             {creationMode === "clone" ? (
               <CloneWebsite onOpenProject={openProject} />
+            ) : creationMode === "import" ? (
+              <ImportCode onOpenProject={openProject} />
             ) : (
               <>
                 <textarea

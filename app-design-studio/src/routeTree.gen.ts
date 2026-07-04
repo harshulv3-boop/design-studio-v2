@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WorkspaceRouteImport } from './routes/workspace'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiImportCodeRouteImport } from './routes/api/import-code'
 import { Route as ApiGenerateRouteImport } from './routes/api/generate'
 import { Route as ApiCloneSplatRouteImport } from './routes/api/clone.$'
 
@@ -22,6 +23,11 @@ const WorkspaceRoute = WorkspaceRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiImportCodeRoute = ApiImportCodeRouteImport.update({
+  id: '/api/import-code',
+  path: '/api/import-code',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiGenerateRoute = ApiGenerateRouteImport.update({
@@ -39,12 +45,14 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/workspace': typeof WorkspaceRoute
   '/api/generate': typeof ApiGenerateRoute
+  '/api/import-code': typeof ApiImportCodeRoute
   '/api/clone/$': typeof ApiCloneSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/workspace': typeof WorkspaceRoute
   '/api/generate': typeof ApiGenerateRoute
+  '/api/import-code': typeof ApiImportCodeRoute
   '/api/clone/$': typeof ApiCloneSplatRoute
 }
 export interface FileRoutesById {
@@ -52,20 +60,29 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/workspace': typeof WorkspaceRoute
   '/api/generate': typeof ApiGenerateRoute
+  '/api/import-code': typeof ApiImportCodeRoute
   '/api/clone/$': typeof ApiCloneSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/workspace' | '/api/generate' | '/api/clone/$'
+  fullPaths:
+    '/' | '/workspace' | '/api/generate' | '/api/import-code' | '/api/clone/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/workspace' | '/api/generate' | '/api/clone/$'
-  id: '__root__' | '/' | '/workspace' | '/api/generate' | '/api/clone/$'
+  to: '/' | '/workspace' | '/api/generate' | '/api/import-code' | '/api/clone/$'
+  id:
+    | '__root__'
+    | '/'
+    | '/workspace'
+    | '/api/generate'
+    | '/api/import-code'
+    | '/api/clone/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   WorkspaceRoute: typeof WorkspaceRoute
   ApiGenerateRoute: typeof ApiGenerateRoute
+  ApiImportCodeRoute: typeof ApiImportCodeRoute
   ApiCloneSplatRoute: typeof ApiCloneSplatRoute
 }
 
@@ -83,6 +100,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/import-code': {
+      id: '/api/import-code'
+      path: '/api/import-code'
+      fullPath: '/api/import-code'
+      preLoaderRoute: typeof ApiImportCodeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/generate': {
@@ -106,6 +130,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   WorkspaceRoute: WorkspaceRoute,
   ApiGenerateRoute: ApiGenerateRoute,
+  ApiImportCodeRoute: ApiImportCodeRoute,
   ApiCloneSplatRoute: ApiCloneSplatRoute,
 }
 export const routeTree = rootRouteImport
