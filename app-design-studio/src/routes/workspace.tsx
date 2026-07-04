@@ -1,6 +1,7 @@
 import { PhoneScreenFrame } from "@/components/PhoneScreenFrame";
 import ColorPickerComponent from "@/components/editor/ColorPicker";
 import { prettyCss, prettyHtml } from "@/lib/format-export";
+import { buildAngularProjectExport, buildVueProjectExport, createProjectZip } from "@/lib/project-export";
 import { ensureIds } from "@/lib/pro/htmlUtils";
 import { applyInteractionToHtml, clearInteractionFromHtml } from "@/lib/pro/prototype";
 import { loadProject, loadProjectById, saveProject } from "@/lib/project-store";
@@ -1479,6 +1480,13 @@ function downloadFile(name: string, content: string, mime: string) {
   URL.revokeObjectURL(url);
 }
 
+function downloadBlob(name: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name; a.click();
+  URL.revokeObjectURL(url);
+}
+
 function ExportDropdown({ project, onClose }: { project: Project | null; onClose: () => void }) {
   const disabled = !project;
   const isWebsite = (project as any)?.format_config?.artifactType === "website";
@@ -1573,6 +1581,8 @@ function ExportDropdown({ project, onClose }: { project: Project | null; onClose
         )}
         {[
           { icon: Code2, label: "Export React (TSX)", action: "code" },
+          { icon: Code2, label: "Export Vue Project", action: "vue" },
+          { icon: Code2, label: "Export Angular Project", action: "angular" },
           { icon: Download, label: "Export raw HTML", action: "html" },
           { icon: Figma, label: "Export Figma-ready JSON", action: "figma" },
           { icon: Download, label: "Download Project JSON", action: "json" },
@@ -1587,6 +1597,16 @@ function ExportDropdown({ project, onClose }: { project: Project | null; onClose
                 const t = toast.loading("Formatting React TSX…");
                 downloadFile(`${name}.tsx`, await tsxWrap(project), "text/plain");
                 toast.success("React TSX downloaded", { id: t });
+              } else if (item.action === "vue") {
+                const t = toast.loading("Packaging Vue project…");
+                const zip = await createProjectZip(await buildVueProjectExport(project));
+                downloadBlob(`${name}-vue.zip`, zip);
+                toast.success("Vue project downloaded", { id: t });
+              } else if (item.action === "angular") {
+                const t = toast.loading("Packaging Angular project…");
+                const zip = await createProjectZip(await buildAngularProjectExport(project));
+                downloadBlob(`${name}-angular.zip`, zip);
+                toast.success("Angular project downloaded", { id: t });
               } else if (item.action === "html") {
                 const t = toast.loading("Formatting HTML…");
                 const rawDoc = `<!doctype html><html><head><meta charset="utf-8"><title>${project.name}</title><style>${project.designSystemCss}</style></head><body>\n${project.screens.map((s) => `<!-- ${s.name} -->\n${s.html}`).join("\n<hr/>\n")}\n</body></html>`;
