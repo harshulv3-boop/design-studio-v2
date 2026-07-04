@@ -1060,116 +1060,125 @@ export default function Canvas() {
         });
       }
     }
-    let dx = (e.clientX - d.startX) / d.z;
-    let dy = (e.clientY - d.startY) / d.z;
-    if (d.type === "move") {
-      // ---- smart guides + snapping against precomputed targets
-      const thr = 6 / d.z;
-      const R = d.primRect;
-      const L = R.left + dx, T = R.top + dy;
-      const W = R.right - R.left, H = R.bottom - R.top;
-      const xEdges = [L, L + W / 2, L + W];
-      const yEdges = [T, T + H / 2, T + H];
-      let bestX = thr, bestY = thr, gv = null, gh = null;
-      d.targets.forEach((t) => {
-        [t.left, (t.left + t.right) / 2, t.right].forEach((tx) => {
-          xEdges.forEach((xe) => {
-            const diff = tx - xe;
-            if (Math.abs(diff) < bestX) {
-              bestX = Math.abs(diff);
-              dx += diff;
-              gv = { x: tx, a: Math.min(T, t.top), b: Math.max(T + H, t.bottom), t };
-            }
-          });
-        });
-        [t.top, (t.top + t.bottom) / 2, t.bottom].forEach((ty) => {
-          yEdges.forEach((ye) => {
-            const diff = ty - ye;
-            if (Math.abs(diff) < bestY) {
-              bestY = Math.abs(diff);
-              dy += diff;
-              gh = { y: ty, a: Math.min(L, t.left), b: Math.max(L + W, t.right), t };
-            }
-          });
-        });
-      });
-
-      d.items.forEach(({ el, baseX, baseY }) => {
-        const nx = baseX + dx;
-        const ny = baseY + dy;
-        el.dataset.maeX = nx;
-        el.dataset.maeY = ny;
-        applyPos(el, nx, ny);
-      });
-
-      // ---- guide lines + distance to snapped neighbour
-      const nextGuides = [];
-      const fL = R.left + dx, fT = R.top + dy;
-      if (gv) {
-        const gap = gv.t.top > fT + H ? gv.t.top - (fT + H) : fT > gv.t.bottom ? fT - gv.t.bottom : null;
-        nextGuides.push({ axis: "v", x: gv.x, a: gv.a, b: gv.b, dist: gap != null ? Math.round(gap) : null });
-      }
-      if (gh) {
-        const gap = gh.t.left > fL + W ? gh.t.left - (fL + W) : fL > gh.t.right ? fL - gh.t.right : null;
-        nextGuides.push({ axis: "h", y: gh.y, a: gh.a, b: gh.b, dist: gap != null ? Math.round(gap) : null });
-      }
-      d.guides = nextGuides;
-    } else {
-      let w = d.baseW, h = d.baseH, tx = d.baseX, ty = d.baseY;
-      if (d.h.dx === 1) w = d.baseW + dx;
-      if (d.h.dx === -1) { w = d.baseW - dx; tx = d.baseX + dx; }
-      if (d.h.dy === 1) h = d.baseH + dy;
-      if (d.h.dy === -1) { h = d.baseH - dy; ty = d.baseY + dy; }
-
-      // Aspect-ratio lock: maintain width/height ratio during drag resize
-      if (store().aspectLocked && d.baseW > 0 && d.baseH > 0) {
-        const ratio = d.baseW / d.baseH;
-        const xOnly = d.h.dx !== 0 && d.h.dy === 0;
-        const yOnly = d.h.dy !== 0 && d.h.dx === 0;
-        if (xOnly) {
-          h = w / ratio;
-        } else if (yOnly) {
-          w = h * ratio;
-          if (d.h.dx === -1) tx = d.baseX + (d.baseW - w);
-        } else {
-          // Corner handle: let the larger delta lead
-          const wDelta = Math.abs(w - d.baseW);
-          const hDelta = Math.abs(h - d.baseH);
-          if (wDelta >= hDelta) {
-            h = w / ratio;
-            if (d.h.dy === -1) ty = d.baseY + (d.baseH - h);
-          } else {
-            w = h * ratio;
-            if (d.h.dx === -1) tx = d.baseX + (d.baseW - w);
-          }
-        }
-      }
-
-      w = Math.max(8, w); h = Math.max(8, h);
-      if (d.h.dx !== 0) d.el.style.width = `${Math.round(w)}px`;
-      if (d.h.dy !== 0) d.el.style.height = `${Math.round(h)}px`;
-      d.el.dataset.maeX = tx;
-      d.el.dataset.maeY = ty;
-      applyPos(d.el, tx, ty);
-      // Push live dimensions so PropertiesPanel updates in real-time
-      store().setLiveSize({
-        id: d.el.getAttribute("data-mae-id"),
-        w: Math.round(w),
-        h: Math.round(h),
-        x: Math.round(tx),
-        y: Math.round(ty),
-      });
-    }
+    // Coalesce all move/resize work into ONE rAF tick. Pointer events fire far
+    // faster than the display refreshes, and the snap loop below scans every
+    // precomputed target — running that on each raw event made dragging janky on
+    // large imported pages. Store the latest coords; compute once per frame.
+    d.lastX = e.clientX;
+    d.lastY = e.clientY;
     if (rafRef.current) return;
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = null;
+      const d = dragRef.current;
+      if (!d) return;
+      let dx = (d.lastX - d.startX) / d.z;
+      let dy = (d.lastY - d.startY) / d.z;
+      if (d.type === "move") {
+        // ---- smart guides + snapping against precomputed targets
+        const thr = 6 / d.z;
+        const R = d.primRect;
+        const L = R.left + dx, T = R.top + dy;
+        const W = R.right - R.left, H = R.bottom - R.top;
+        const xEdges = [L, L + W / 2, L + W];
+        const yEdges = [T, T + H / 2, T + H];
+        let bestX = thr, bestY = thr, gv = null, gh = null;
+        d.targets.forEach((t) => {
+          [t.left, (t.left + t.right) / 2, t.right].forEach((tx) => {
+            xEdges.forEach((xe) => {
+              const diff = tx - xe;
+              if (Math.abs(diff) < bestX) {
+                bestX = Math.abs(diff);
+                dx += diff;
+                gv = { x: tx, a: Math.min(T, t.top), b: Math.max(T + H, t.bottom), t };
+              }
+            });
+          });
+          [t.top, (t.top + t.bottom) / 2, t.bottom].forEach((ty) => {
+            yEdges.forEach((ye) => {
+              const diff = ty - ye;
+              if (Math.abs(diff) < bestY) {
+                bestY = Math.abs(diff);
+                dy += diff;
+                gh = { y: ty, a: Math.min(L, t.left), b: Math.max(L + W, t.right), t };
+              }
+            });
+          });
+        });
+
+        d.items.forEach(({ el, baseX, baseY }) => {
+          const nx = baseX + dx;
+          const ny = baseY + dy;
+          el.dataset.maeX = nx;
+          el.dataset.maeY = ny;
+          applyPos(el, nx, ny);
+        });
+
+        // ---- guide lines + distance to snapped neighbour
+        const nextGuides = [];
+        const fL = R.left + dx, fT = R.top + dy;
+        if (gv) {
+          const gap = gv.t.top > fT + H ? gv.t.top - (fT + H) : fT > gv.t.bottom ? fT - gv.t.bottom : null;
+          nextGuides.push({ axis: "v", x: gv.x, a: gv.a, b: gv.b, dist: gap != null ? Math.round(gap) : null });
+        }
+        if (gh) {
+          const gap = gh.t.left > fL + W ? gh.t.left - (fL + W) : fL > gh.t.right ? fL - gh.t.right : null;
+          nextGuides.push({ axis: "h", y: gh.y, a: gh.a, b: gh.b, dist: gap != null ? Math.round(gap) : null });
+        }
+        d.guides = nextGuides;
+      } else {
+        let w = d.baseW, h = d.baseH, tx = d.baseX, ty = d.baseY;
+        if (d.h.dx === 1) w = d.baseW + dx;
+        if (d.h.dx === -1) { w = d.baseW - dx; tx = d.baseX + dx; }
+        if (d.h.dy === 1) h = d.baseH + dy;
+        if (d.h.dy === -1) { h = d.baseH - dy; ty = d.baseY + dy; }
+
+        // Aspect-ratio lock: maintain width/height ratio during drag resize
+        if (store().aspectLocked && d.baseW > 0 && d.baseH > 0) {
+          const ratio = d.baseW / d.baseH;
+          const xOnly = d.h.dx !== 0 && d.h.dy === 0;
+          const yOnly = d.h.dy !== 0 && d.h.dx === 0;
+          if (xOnly) {
+            h = w / ratio;
+          } else if (yOnly) {
+            w = h * ratio;
+            if (d.h.dx === -1) tx = d.baseX + (d.baseW - w);
+          } else {
+            // Corner handle: let the larger delta lead
+            const wDelta = Math.abs(w - d.baseW);
+            const hDelta = Math.abs(h - d.baseH);
+            if (wDelta >= hDelta) {
+              h = w / ratio;
+              if (d.h.dy === -1) ty = d.baseY + (d.baseH - h);
+            } else {
+              w = h * ratio;
+              if (d.h.dx === -1) tx = d.baseX + (d.baseW - w);
+            }
+          }
+        }
+
+        w = Math.max(8, w); h = Math.max(8, h);
+        if (d.h.dx !== 0) d.el.style.width = `${Math.round(w)}px`;
+        if (d.h.dy !== 0) d.el.style.height = `${Math.round(h)}px`;
+        d.el.dataset.maeX = tx;
+        d.el.dataset.maeY = ty;
+        applyPos(d.el, tx, ty);
+        // Push live dimensions so PropertiesPanel updates in real-time
+        store().setLiveSize({
+          id: d.el.getAttribute("data-mae-id"),
+          w: Math.round(w),
+          h: Math.round(h),
+          x: Math.round(tx),
+          y: Math.round(ty),
+        });
+      }
+
       recompute();
-      if (dragRef.current?.type === "move") {
-        setGuides(dragRef.current.guides || []);
+      if (d.type === "move") {
+        setGuides(d.guides || []);
 
         // Frame drop-indicator: outline the frame the primary item is over
         const page = pageRef.current;
-        const primEl = dragRef.current.items?.[0]?.el;
+        const primEl = d.items?.[0]?.el;
         let overFrame = null;
         if (page && primEl) {
           const er = primEl.getBoundingClientRect();
