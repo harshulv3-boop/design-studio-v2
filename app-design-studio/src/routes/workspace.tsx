@@ -1,5 +1,6 @@
 import { PhoneScreenFrame } from "@/components/PhoneScreenFrame";
 import ColorPickerComponent from "@/components/editor/ColorPicker";
+import { remapHtmlColors } from "@/lib/color-remap";
 import { prettyCss, prettyHtml } from "@/lib/format-export";
 import { buildAngularProjectExport, buildVueProjectExport, createProjectZip } from "@/lib/project-export";
 import { ensureIds } from "@/lib/pro/htmlUtils";
@@ -281,6 +282,13 @@ function Workspace() {
       const { jobId } = (await startRes.json()) as { jobId: string };
       let seenProgress = 0;
       let lastScreenCount = 0;
+      // Cache ensureIds() output per raw html so a finished screen is parsed +
+      // sanitized ONCE, not re-parsed on every poll tick for the rest of the job.
+      const idCache = new Map<string, string>();
+      // Signature of the last screen set we pushed to React/localStorage, so we
+      // skip setProject()/saveProject() on ticks where nothing changed (the
+      // common case: most polls return the same in-progress project).
+      let lastScreensSig = "";
 
       navigate({ to: "/workspace", search: {}, replace: true });
 
@@ -302,14 +310,27 @@ function Workspace() {
         }
 
         if (job.project) {
-          const screens = job.project.screens.map((screen) => ({ ...screen, html: ensureIds(screen.html) }));
-          const projectSnapshot = normalizeProject({ ...job.project, screens } as Project)!;
-          setProject(projectSnapshot);
-          saveProject(projectSnapshot);
-          if (screens.length > lastScreenCount) {
-            setSelectedId((current) => current ?? screens[0]?.id ?? null);
-            lastScreenCount = screens.length;
-            lastLoadedRef.current = null;
+          // Cheap change check first — only touch React state + localStorage when
+          // the actual screen payloads changed since the last tick.
+          const sig = `${job.project.screens.length}:${job.project.screens.map((s) => s.html.length).join(",")}`;
+          if (sig !== lastScreensSig) {
+            lastScreensSig = sig;
+            const screens = job.project.screens.map((screen) => {
+              let html = idCache.get(screen.html);
+              if (html === undefined) {
+                html = ensureIds(screen.html);
+                idCache.set(screen.html, html);
+              }
+              return { ...screen, html };
+            });
+            const projectSnapshot = normalizeProject({ ...job.project, screens } as Project)!;
+            setProject(projectSnapshot);
+            saveProject(projectSnapshot);
+            if (screens.length > lastScreenCount) {
+              setSelectedId((current) => current ?? screens[0]?.id ?? null);
+              lastScreenCount = screens.length;
+              lastLoadedRef.current = null;
+            }
           }
         }
 
@@ -437,13 +458,20 @@ function Workspace() {
       if (!restored) return;
       useEditorStore.setState({ paletteRestored: null });
       setProject((prev) => {
-        if (!prev || prev.designSystemCss === restored.css) return prev;
+        if (!prev) return prev;
+        // A whole-project restyle snapshot also carries all screens; restore them
+        // too. (A plain palette tweak has no screens and only swaps css/palette.)
+        const screensChanged = Array.isArray(restored.screens);
+        if (!screensChanged && prev.designSystemCss === restored.css) return prev;
         const next = {
           ...prev,
           designSystemCss: restored.css,
           designSystem: { ...prev.designSystem, palette: restored.palette },
+          ...(screensChanged ? { screens: restored.screens } : {}),
         } as Project;
         saveProject(next);
+        // Force the editor to reload the selected screen from the restored html.
+        lastLoadedRef.current = null;
         return next;
       });
     });
@@ -509,7 +537,7 @@ function Workspace() {
             elementHtml,
             projectContext: { name: project.name, platform: "web" },
           }),
-        });
+        }, AI_GENERATION_REQUEST_TIMEOUT_MS);
         if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
         const { html } = (await res.json()) as { html: string };
         const frag = new DOMParser().parseFromString(`<div id="__f">${html}</div>`, "text/html");
@@ -557,7 +585,7 @@ function Workspace() {
           designSystemCss: project.designSystemCss,
           projectContext: { name: project.name, platform: project.platform },
         }),
-      });
+      }, AI_GENERATION_REQUEST_TIMEOUT_MS);
       if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
       const { html } = (await res.json()) as { html: string };
       const withIds = ensureIds(html);
@@ -629,21 +657,27 @@ function Workspace() {
       }, AI_GENERATION_REQUEST_TIMEOUT_MS);
       if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
       const data = (await res.json()) as { designSystem: Project["designSystem"]; designSystemCss: string };
-      let nextScreens = snapshot.screens;
-      if (!isWebsite) {
-        const oldPalette = project.designSystem.palette;
-        const replacements = Object.entries(data.designSystem.palette)
-          .map(([key, value]) => [oldPalette[key as keyof typeof oldPalette], value] as const)
-          .filter(([oldValue, value]) => oldValue && value && oldValue !== value);
-        nextScreens = snapshot.screens.map((screen) => {
-          let html = screen.html;
-          for (const [oldValue, value] of replacements) html = html.split(oldValue).join(value);
-          return { ...screen, html };
-        });
-      }
+      const oldPalette = snapshot.designSystem.palette;
+      const newPalette = data.designSystem.palette;
+      // Screens hardcode inline colors instead of using CSS variables, so a new
+      // designSystemCss alone won't restyle them. Deterministically remap EVERY
+      // color in EVERY screen from the old palette to the new one (nearest-anchor
+      // + preserved offset) — this is what actually re-themes all screens
+      // consistently. Applies to native app AND website projects.
+      const nextScreens = snapshot.screens.map((screen) => ({
+        ...screen,
+        html: remapHtmlColors(screen.html, oldPalette, newPalette),
+      }));
       const next = { ...snapshot, designSystem: data.designSystem, designSystemCss: data.designSystemCss, screens: nextScreens } as Project;
+      // Record the full restyle (old css + palette + all screens) in the shared
+      // undo history BEFORE applying, so Ctrl+Z / the toolbar buttons revert it.
+      (useEditorStore.getState() as any).commitDesignRestyle(
+        data.designSystemCss, newPalette,
+        snapshot.designSystemCss, oldPalette, snapshot.screens,
+      );
       setProject(next);
       saveProject(next);
+      lastLoadedRef.current = null; // reload editor from the remapped selected screen
       toast.success(payload.sourceUrl ? "Applied AI style reference" : "Design system updated");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

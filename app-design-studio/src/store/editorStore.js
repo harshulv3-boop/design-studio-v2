@@ -127,6 +127,22 @@ export const useEditorStore = create((set, get) => ({
     });
   },
 
+  // Record a whole-project design restyle (System Design / AI theme) in the
+  // shared undo history. Unlike a single palette tweak, this also remaps EVERY
+  // screen's html, so the snapshot carries oldScreens; undo/redo swap the full
+  // screen set back via paletteRestored (workspace restores it into project).
+  // newScreens are applied to project by the caller (setProject).
+  commitDesignRestyle: (newCss, newPalette, oldCss, oldPalette, oldScreens) => {
+    const { html, page, history } = get();
+    set({
+      designSystemCss: newCss,
+      palette: newPalette,
+      history: [...history, { html, page, css: oldCss, palette: oldPalette, screens: oldScreens }].slice(-MAX_HISTORY),
+      future: [],
+      dirty: true,
+    });
+  },
+
   // DOM already reflects newHtml; just record history + sync string.
   // During a batch, intermediate calls only update html (no history entry).
   commitDom: (newHtml) => {
@@ -178,20 +194,24 @@ export const useEditorStore = create((set, get) => ({
   },
 
   undo: () => {
-    const { history, future, html, page, designSystemCss, palette, _fromSnap } = get();
+    const { history, future, html, page, designSystemCss, palette, project, _fromSnap } = get();
     if (history.length === 0) return;
     const prev = _fromSnap(history[history.length - 1]);
     const hasCss = prev.css !== undefined;
+    // If this entry restyled all screens, remember the CURRENT screens so redo
+    // can put them back, and hand the old screens to workspace for restore.
+    const hasScreens = prev.screens !== undefined;
+    const curScreens = hasScreens ? project?.screens : undefined;
     set({
       html: prev.html,
       page: prev.page,
       ...(hasCss ? {
         designSystemCss: prev.css,
         palette: prev.palette,
-        paletteRestored: { css: prev.css, palette: prev.palette },
+        paletteRestored: { css: prev.css, palette: prev.palette, ...(hasScreens ? { screens: prev.screens } : {}) },
       } : {}),
       history: history.slice(0, -1),
-      future: [{ html, page, ...(hasCss ? { css: designSystemCss, palette } : {}) }, ...future].slice(0, MAX_HISTORY),
+      future: [{ html, page, ...(hasCss ? { css: designSystemCss, palette } : {}), ...(hasScreens ? { screens: curScreens } : {}) }, ...future].slice(0, MAX_HISTORY),
       htmlVersion: get().htmlVersion + 1,
       dirty: true,
       selectedId: null,
@@ -200,20 +220,22 @@ export const useEditorStore = create((set, get) => ({
   },
 
   redo: () => {
-    const { history, future, html, page, designSystemCss, palette, _fromSnap } = get();
+    const { history, future, html, page, designSystemCss, palette, project, _fromSnap } = get();
     if (future.length === 0) return;
     const next = _fromSnap(future[0]);
     const hasCss = next.css !== undefined;
+    const hasScreens = next.screens !== undefined;
+    const curScreens = hasScreens ? project?.screens : undefined;
     set({
       html: next.html,
       page: next.page,
       ...(hasCss ? {
         designSystemCss: next.css,
         palette: next.palette,
-        paletteRestored: { css: next.css, palette: next.palette },
+        paletteRestored: { css: next.css, palette: next.palette, ...(hasScreens ? { screens: next.screens } : {}) },
       } : {}),
       future: future.slice(1),
-      history: [...history, { html, page, ...(hasCss ? { css: designSystemCss, palette } : {}) }].slice(-MAX_HISTORY),
+      history: [...history, { html, page, ...(hasCss ? { css: designSystemCss, palette } : {}), ...(hasScreens ? { screens: curScreens } : {}) }].slice(-MAX_HISTORY),
       htmlVersion: get().htmlVersion + 1,
       dirty: true,
       selectedId: null,

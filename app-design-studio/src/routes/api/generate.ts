@@ -29,6 +29,23 @@ function extractHtml(text: string): string {
   return t;
 }
 
+// Run `fn` over `items` with at most `limit` in flight at once, preserving
+// input order in the result. Independent model calls (screens) parallelize
+// safely; the limit avoids bursting the provider's rate limit on large apps.
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  const worker = async () => {
+    while (true) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 function compactCssForTheme(css: string, maxChars = 40_000): string {
   const cleaned = css
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -79,14 +96,19 @@ Rules:
 }
 
 function systemDesignFromInstruction() {
-  return `You are a senior product design system director. Return ONLY a JSON object matching this shape:
+  return `You are a senior product design system director restyling an app. Return ONLY a JSON object matching this shape:
 {
   "palette": { "background":"#hex","surface":"#hex","text":"#hex","muted":"#hex","accent":"#hex","accentText":"#hex" },
   "radius": "sm"|"md"|"lg"|"xl",
   "font": string,
   "designSystemCss": string
 }
-Keep the same CSS variable names used by the existing app: --bg, --surface, --text, --muted, --accent, --accent-text, --radius, --font.
+Let the INSTRUCTION and REFERENCE drive the visual direction — YOU decide how far to go:
+- If a reference/brand is given, infer its palette, typography, mood and interaction feel and commit to that direction (change colors, font, light/dark, radii as the reference implies). If only a light instruction is given, make a proportionate change. Do not force the result to resemble the current design when the reference points elsewhere.
+- Choose whatever font best fits the direction.
+STRUCTURAL rules (these must hold so the app doesn't break — they do NOT constrain the look):
+- Keep the SAME CSS variable names the app uses: --bg, --surface, --text, --muted, --accent, --accent-text, --radius, --font. Do NOT rename or drop the component classes the screens rely on (.screen, .nav-bar, .tab-bar, .btn-primary, .card, etc.) — restyle them, keep the selectors.
+- Ensure text/background contrast stays legible.
 Return production-quality mobile UI tokens. No prose, no markdown.`;
 }
 
@@ -101,8 +123,8 @@ Return ONLY a JSON object matching this shape:
 }
 Rules:
 - This is AI interpretation only. Do NOT clone, scrape, copy, or import CSS from any reference URL.
-- Restyle by editing the provided captured CSS/design tokens into an original visual direction inspired by the instruction/reference.
-- Preserve existing selector intent and page structure compatibility. Do not require HTML rewrites.
+- Let the INSTRUCTION and REFERENCE drive the visual direction — YOU decide how far to go. If a reference/brand is given, infer its color, typography and mood language and commit to that direction (change palette, fonts, light/dark as the reference implies); the result does NOT need to resemble the current site. If only a light instruction is given, make a proportionate change.
+- STRUCTURAL (must hold, does NOT constrain the look): preserve existing selector intent and page structure — do not rename or drop selectors, do not require HTML rewrites. Keep text/background contrast legible.
 - Preserve editability: do not add scripts, iframes, forms, external resources, @import, or remote fonts.
 - Prefer CSS variables or top-level reusable rules when they already exist, but captured website CSS may not use app tokens.
 - Keep the output CSS complete enough to replace the current captured CSS. No prose, no markdown.`;
@@ -147,22 +169,63 @@ function addUsage(a: Usage, b: Usage): Usage {
 // compare our SDK-reported totals directly against Gemini's dashboard.
 let SESSION = { calls: 0, input: 0, output: 0, total: 0 };
 
-async function runModel(model: ReturnType<ReturnType<typeof createLovableAiGatewayProvider>>, system: string, prompt: string, retries = 3, abortSignal?: AbortSignal): Promise<{ text: string; usage: Usage }> {
+// Per-mode output-token caps. The model (glm-5.2) is a REASONING model: without
+// a cap it burns 60-70% of its output budget "thinking" and can run away for
+// minutes on a single screen (measured: 250s, 11.9k reasoning tokens, before
+// this change). Capping output + forcing reasoning_effort=minimal (see
+// getGenerationModel) brought a single screen to ~45s. These caps are generous
+// upper bounds sized to the largest legitimate outputs we've observed.
+const MAX_TOKENS = {
+  plan: 6000,   // Phase-1 JSON: design system CSS + screen manifest
+  screen: 8000, // one full HTML screen fragment
+  refine: 8000, // an edited screen / element
+  theme: 6000,  // design-system JSON (palette + CSS)
+} as const;
+
+// Hard wall-clock ceiling for any single model call, independent of the
+// client. Prevents a hung upstream from pinning a request/quota forever.
+const MODEL_CALL_TIMEOUT_MS = 90_000;
+
+type ModelTuning = {
+  model: ReturnType<ReturnType<typeof createLovableAiGatewayProvider>>;
+  providerOptions?: Parameters<typeof generateText>[0]["providerOptions"];
+};
+
+type RunModelOpts = {
+  maxOutputTokens?: number;
+  retries?: number;
+  abortSignal?: AbortSignal;
+};
+
+async function runModel(tuning: ModelTuning, system: string, prompt: string, opts: RunModelOpts = {}): Promise<{ text: string; usage: Usage }> {
+  const { maxOutputTokens, retries = 3, abortSignal } = opts;
   let lastErr: unknown = null;
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      const r = await generateText({ model, system, prompt, abortSignal });
+      // Combine the caller's abort signal with a hard per-call timeout so a
+      // single call can never run unbounded (protects quota + throughput).
+      const timeout = AbortSignal.timeout(MODEL_CALL_TIMEOUT_MS);
+      const signal = abortSignal ? AbortSignal.any([abortSignal, timeout]) : timeout;
+      const r = await generateText({
+        model: tuning.model,
+        system,
+        prompt,
+        abortSignal: signal,
+        maxOutputTokens,
+        providerOptions: tuning.providerOptions,
+      });
       const usage = readUsage(r.usage);
       SESSION = { calls: SESSION.calls + 1, input: SESSION.input + usage.input, output: SESSION.output + usage.output, total: SESSION.total + usage.total };
-      // Log the RAW usage object too — surfaces any extra fields Google bills
-      // (reasoning/thinking tokens, cached input) that our totals might miss.
+      // Log the RAW usage object too — surfaces any extra fields the provider
+      // bills (reasoning/thinking tokens, cached input) that our totals might miss.
       console.log(`[token-usage] call @ ${new Date().toISOString()} | in=${usage.input} out=${usage.output} total=${usage.total} | raw=${JSON.stringify(r.usage)} | SESSION calls=${SESSION.calls} in=${SESSION.input} out=${SESSION.output} total=${SESSION.total}`);
       return { text: r.text, usage };
     } catch (err) {
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
+      // Caller-driven cancellation is terminal; a per-call timeout is retryable.
       if (abortSignal?.aborted) break;
-      if (!/unavailable|429|5\d\d|timeout|overload/i.test(msg)) break;
+      if (!/unavailable|429|5\d\d|timeout|overload|aborted|timed out/i.test(msg)) break;
       await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
     }
   }
@@ -184,21 +247,57 @@ type GenerationJob = {
   updatedAt: number;
 };
 
+// In-memory job registry. NOTE: process-local — a multi-instance / multi-isolate
+// deployment needs this swapped for a shared store (KV / Durable Object / Redis)
+// so status polls land on the same state that started the job. Kept behind these
+// three helpers (getJob / setJob / sweepJobs) so that swap is a localized change.
 const generationJobs = new Map<string, GenerationJob>();
 
-function getGenerationModel() {
+// A finished job is kept this long so the client can still read its final state;
+// an in-flight job older than the hard cap is treated as abandoned and evicted.
+const JOB_DONE_TTL_MS = 5 * 60_000;
+const JOB_MAX_AGE_MS = 30 * 60_000;
+
+function sweepJobs() {
+  const now = Date.now();
+  for (const [id, job] of generationJobs) {
+    const done = job.status === "completed" || job.status === "failed" || job.status === "cancelled";
+    if (done && now - job.updatedAt > JOB_DONE_TTL_MS) generationJobs.delete(id);
+    else if (now - job.createdAt > JOB_MAX_AGE_MS) {
+      job.abortController.abort();
+      generationJobs.delete(id);
+    }
+  }
+}
+
+function getGenerationModel(): ModelTuning {
   const openAiKey = process.env.OPENAI_API_KEY;
   const openAiBaseUrl = process.env.OPENAI_COMPATIBLE_BASE_URL ?? "https://api.inference.net/v1";
+  const openAiModel = process.env.OPENAI_MODEL ?? "gpt-5.5";
   const lovableKey = process.env.LOVABLE_API_KEY;
   const geminiKey = process.env.GEMINI_API_KEY;
   if (!openAiKey && !lovableKey && !geminiKey) {
     throw new Error("Missing OPENAI_API_KEY, GEMINI_API_KEY, or LOVABLE_API_KEY");
   }
-  return openAiKey
-    ? createOpenAiProvider(openAiKey, openAiBaseUrl)("gpt-5.5")
-    : lovableKey
-      ? createLovableAiGatewayProvider(lovableKey)("google/gemini-3-flash-preview")
-      : createGeminiProvider(geminiKey!)("gemini-2.5-flash-lite");
+  if (openAiKey) {
+    // OpenAI-compatible providers (incl. reasoning models like glm-5.2). Force
+    // reasoning_effort=minimal: for structured HTML/CSS generation the model's
+    // chain-of-thought is pure latency+cost with no quality benefit, and it's
+    // the single biggest lever measured (250s -> 45s per screen). Overridable
+    // via OPENAI_REASONING_EFFORT for models/endpoints that ignore or dislike it.
+    const reasoningEffort = process.env.OPENAI_REASONING_EFFORT ?? "minimal";
+    // Provider is created with name "openai-compatible"; the SDK reads provider
+    // options under the camelCase key "openaiCompatible".
+    return {
+      model: createOpenAiProvider(openAiKey, openAiBaseUrl)(openAiModel),
+      providerOptions: reasoningEffort
+        ? { openaiCompatible: { reasoningEffort } }
+        : undefined,
+    };
+  }
+  return lovableKey
+    ? { model: createLovableAiGatewayProvider(lovableKey)("google/gemini-3-flash-preview") }
+    : { model: createGeminiProvider(geminiKey!)("gemini-2.5-flash-lite") };
 }
 
 function updateJob(job: GenerationJob, patch: Partial<GenerationJob>) {
@@ -215,13 +314,19 @@ function serializeJob(job: GenerationJob) {
   return safeJob;
 }
 
+// How many screen calls run concurrently. Screens are independent (each needs
+// only the plan + shared CSS), so this is safe to parallelize; the cap keeps us
+// from bursting the provider's rate limit on large apps. 4 covers the typical
+// 4-5 screen app in a single wave.
+const SCREEN_CONCURRENCY = 4;
+
 async function runGenerationJob(job: GenerationJob) {
   try {
     const model = getGenerationModel();
     updateJob(job, { status: "planning" });
     pushProgress(job, "Creating navigation and design system...");
 
-    const p1res = await runModel(model, systemPhase1(), `App idea: ${job.idea}\nTarget platform: ${job.platform}`, 3, job.abortController.signal);
+    const p1res = await runModel(model, systemPhase1(), `App idea: ${job.idea}\nTarget platform: ${job.platform}`, { maxOutputTokens: MAX_TOKENS.plan, abortSignal: job.abortController.signal });
     if (job.abortController.signal.aborted) throw new Error("Generation cancelled");
     const plan = extractJson(p1res.text) as Phase1;
     if (!plan?.designSystemCss || !Array.isArray(plan.screens) || plan.screens.length === 0) {
@@ -240,20 +345,43 @@ async function runGenerationJob(job: GenerationJob) {
     updateJob(job, { status: "generating", project });
     pushProgress(job, "Design system ready. Building screens now...");
 
-    for (const [i, screen] of plan.screens.entries()) {
-      if (job.abortController.signal.aborted) throw new Error("Generation cancelled");
-      updateJob(job, { currentScreenIndex: i });
-      pushProgress(job, `Creating ${screen.name}...`);
+    // Phase 2: generate screens in parallel (bounded), appending each to the
+    // project as soon as it resolves so the polling UI renders screens one by
+    // one as they land — rather than waiting for the whole batch. A shared
+    // cursor hands work to SCREEN_CONCURRENCY workers.
+    const others = plan.screens.map((x, idx) => `${idx + 1}. ${x.name} — ${x.role}`).join("\n");
+    const results: (Project["screens"][number] | null)[] = new Array(plan.screens.length).fill(null);
+    let completed = 0;
+    let cursor = 0;
 
-      const others = plan.screens.map((x, idx) => `${idx + 1}. ${x.name} — ${x.role}`).join("\n");
-      const prompt = `App: ${plan.name} (${plan.platform})\nIdea: ${job.idea}\n\nAll screens in this app:\n${others}\n\nGenerate screen #${i + 1}: "${screen.name}" (role: ${screen.role}, id: ${screen.id}).\n\nDesign system CSS you MUST use:\n${plan.designSystemCss}`;
-      const result = await runModel(model, systemPhase2(), prompt, 3, job.abortController.signal);
-      if (job.abortController.signal.aborted) throw new Error("Generation cancelled");
+    const worker = async () => {
+      while (true) {
+        const i = cursor++;
+        if (i >= plan.screens.length) return;
+        if (job.abortController.signal.aborted) throw new Error("Generation cancelled");
+        const screen = plan.screens[i];
+        const prompt = `App: ${plan.name} (${plan.platform})\nIdea: ${job.idea}\n\nAll screens in this app:\n${others}\n\nGenerate screen #${i + 1}: "${screen.name}" (role: ${screen.role}, id: ${screen.id}).\n\nDesign system CSS you MUST use:\n${plan.designSystemCss}`;
+        const result = await runModel(model, systemPhase2(), prompt, { maxOutputTokens: MAX_TOKENS.screen, abortSignal: job.abortController.signal });
+        if (job.abortController.signal.aborted) throw new Error("Generation cancelled");
+        results[i] = { ...screen, html: extractHtml(result.text) };
+        completed++;
+        // Publish EVERY completed screen immediately (compacted, in plan order),
+        // not just a contiguous prefix — so a slow screen #0 doesn't hide the
+        // screens that already finished. `filter` preserves ascending plan
+        // order, so screens settle into final order as earlier ones land.
+        const ready = results.filter((s): s is Project["screens"][number] => s !== null);
+        project.screens = ready;
+        updateJob(job, { project: { ...project, screens: [...ready] }, currentScreenIndex: completed });
+        pushProgress(job, `${screen.name} ready. (${completed}/${plan.screens.length})`);
+      }
+    };
 
-      project.screens = [...project.screens, { ...screen, html: extractHtml(result.text) }];
-      updateJob(job, { project: { ...project, screens: [...project.screens] } });
-      pushProgress(job, `${screen.name} ready.`);
-    }
+    await Promise.all(Array.from({ length: Math.min(SCREEN_CONCURRENCY, plan.screens.length) }, worker));
+
+    // Ensure every screen (including any that finished out of prefix order) is
+    // present in final plan order.
+    project.screens = results.filter((s): s is Project["screens"][number] => s !== null);
+    updateJob(job, { project: { ...project, screens: [...project.screens] } });
 
     pushProgress(job, "Finalizing design...");
     updateJob(job, { status: "completed", currentScreenIndex: undefined });
@@ -295,6 +423,7 @@ export const Route = createFileRoute("/api/generate")({
 
         try {
           if (body.mode === "start-generation") {
+            sweepJobs(); // evict finished/abandoned jobs before adding a new one
             const job: GenerationJob = {
               id: crypto.randomUUID(),
               idea: body.idea?.trim() || "A modern mobile app",
@@ -333,8 +462,12 @@ export const Route = createFileRoute("/api/generate")({
           if (body.mode === "design-system") {
             if (!body.project) return Response.json({ error: "design-system requires project" }, { status: 400 });
             const instruction = body.instruction?.trim() || (body.sourceUrl ? `Use ${body.sourceUrl} as a brand/style reference and reinterpret that visual direction for this app.` : "Improve this design system");
-            const prompt = `Instruction: ${instruction}\n\nReference URL, if any: ${body.sourceUrl ?? "none"}\nImportant: Do not clone, scrape, or copy CSS from the reference URL. Infer the likely brand direction, mood, color/typography language, and interaction feel, then create an original app design system inspired by it.\n\nCurrent app idea: ${body.project.idea}\nCurrent project name: ${body.project.name}\nCurrent platform: ${body.project.platform}\nCurrent design system JSON:\n${JSON.stringify(body.project.designSystem)}\n\nCurrent designSystemCss:\n${body.project.designSystemCss}\n\nReturn the updated design system only.`;
-            const result = await runModel(model, systemDesignFromInstruction(), prompt);
+            // Compact the current CSS (strip comments/whitespace, cap length) so a
+            // large design system can't inflate the prompt — same treatment the
+            // website-design-system path already applies.
+            const currentCss = compactCssForTheme(body.project.designSystemCss ?? "");
+            const prompt = `Instruction: ${instruction}\n\nReference URL, if any: ${body.sourceUrl ?? "none"}\nImportant: Do not clone, scrape, or copy CSS from the reference URL. Infer the likely brand direction, mood, color/typography language, and interaction feel, then create an original app design system inspired by it.\n\nCurrent app idea: ${body.project.idea}\nCurrent project name: ${body.project.name}\nCurrent platform: ${body.project.platform}\nCurrent design system JSON:\n${JSON.stringify(body.project.designSystem)}\n\nCurrent designSystemCss:\n${currentCss}\n\nReturn the updated design system only.`;
+            const result = await runModel(model, systemDesignFromInstruction(), prompt, { maxOutputTokens: MAX_TOKENS.theme, abortSignal: request.signal });
             const next = extractJson(result.text) as {
               palette: Project["designSystem"]["palette"];
               radius: Project["designSystem"]["radius"];
@@ -370,7 +503,7 @@ Current captured CSS to restyle and return as a full replacement:
 ${currentCss}
 
 Return the updated website design system only.`;
-            const result = await runModel(model, systemWebsiteDesignFromInstruction(), prompt);
+            const result = await runModel(model, systemWebsiteDesignFromInstruction(), prompt, { maxOutputTokens: MAX_TOKENS.theme, abortSignal: request.signal });
             const next = extractJson(result.text) as {
               palette: Project["designSystem"]["palette"];
               radius: Project["designSystem"]["radius"];
@@ -385,16 +518,19 @@ Return the updated website design system only.`;
             if (!body.project) return Response.json({ error: "extra-screen requires project" }, { status: 400 });
             const name = body.screenName?.trim() || "New Screen";
             const id = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || crypto.randomUUID();
-            const existing = body.project.screens.map((screen, idx) => `${idx + 1}. ${screen.name}: ${screen.html.slice(0, 1200)}`).join("\n\n");
+            // Only a few example screens are needed for consistency; capping the
+            // count (and each excerpt) keeps this prompt bounded regardless of how
+            // large the project grows.
+            const existing = body.project.screens.slice(0, 4).map((screen, idx) => `${idx + 1}. ${screen.name}: ${screen.html.slice(0, 1000)}`).join("\n\n");
             const prompt = `App: ${body.project.name} (${body.project.platform})\nIdea: ${body.project.idea}\n\nNew screen name: ${name}\nPurpose: ${body.purpose?.trim() || "Match the product flow and fill an obvious missing screen."}\nScreen id: ${id}\n\nExisting screens for consistency:\n${existing}\n\nShared design system CSS you MUST use:\n${body.project.designSystemCss}`;
-            const result = await runModel(model, systemExtraScreen(), prompt);
+            const result = await runModel(model, systemExtraScreen(), prompt, { maxOutputTokens: MAX_TOKENS.screen, abortSignal: request.signal });
             return Response.json({ screen: { id, name, role: body.purpose?.trim() || name, html: extractHtml(result.text) } });
           }
 
           if (body.mode === "generate-plan") {
             const idea = body.idea?.trim() || "A modern mobile app";
             const platform = body.platform ?? "ios";
-            const p1res = await runModel(model, systemPhase1(), `App idea: ${idea}\nTarget platform: ${platform}`);
+            const p1res = await runModel(model, systemPhase1(), `App idea: ${idea}\nTarget platform: ${platform}`, { maxOutputTokens: MAX_TOKENS.plan, abortSignal: request.signal });
             const plan = extractJson(p1res.text) as Phase1;
             if (!plan?.designSystemCss || !Array.isArray(plan.screens) || plan.screens.length === 0) {
               return Response.json({ error: "Planning output invalid", raw: p1res.text.slice(0, 500) }, { status: 502 });
@@ -411,7 +547,7 @@ Return the updated website design system only.`;
             const idea = body.idea?.trim() || "A modern mobile app";
             const others = body.plan.screens.map((x, idx) => `${idx + 1}. ${x.name} — ${x.role}`).join("\n");
             const prompt = `App: ${body.plan.name} (${body.plan.platform})\nIdea: ${idea}\n\nAll screens in this app:\n${others}\n\nGenerate screen #${body.screenIndex + 1}: "${screen.name}" (role: ${screen.role}, id: ${screen.id}).\n\nDesign system CSS you MUST use:\n${body.plan.designSystemCss}`;
-            const result = await runModel(model, systemPhase2(), prompt);
+            const result = await runModel(model, systemPhase2(), prompt, { maxOutputTokens: MAX_TOKENS.screen, abortSignal: request.signal });
             return Response.json({ screen: { ...screen, html: extractHtml(result.text) }, usage: { mode: "generate-screen", calls: 1, ...result.usage } });
           }
 
@@ -427,7 +563,7 @@ Rules:
 - Make ONLY the change the user asked for; keep all other attributes, classes, inline styles and children as-is.
 - Do not add <script>, <iframe>, <form> or external resources.`;
             const prompt = `Page: ${body.projectContext?.name ?? ""}\n\nInstruction:\n${body.instruction}\n\nElement HTML:\n${body.elementHtml}`;
-            const { text, usage } = await runModel(model, system, prompt);
+            const { text, usage } = await runModel(model, system, prompt, { maxOutputTokens: MAX_TOKENS.refine, abortSignal: request.signal });
             console.log(`[token-usage] refine-element | input=${usage.input} output=${usage.output} total=${usage.total}`);
             return Response.json({ html: extractHtml(text), usage: { mode: "refine-element", calls: 1, ...usage } });
           }
@@ -441,7 +577,7 @@ Preserve the outer <div class="screen" data-screen-id="..."> wrapper.
 Keep using the provided design-system CSS variables/classes; do not redefine tokens.
 Make ONLY the change the user asked for; leave the rest as-is.`;
             const prompt = `Design system CSS (context, do not modify):\n${body.designSystemCss ?? ""}\n\nApp: ${body.projectContext?.name ?? ""} (${body.projectContext?.platform ?? "ios"})\n\nInstruction:\n${body.instruction}\n\nCurrent screen HTML:\n${body.screenHtml}`;
-            const { text, usage } = await runModel(model, system, prompt);
+            const { text, usage } = await runModel(model, system, prompt, { maxOutputTokens: MAX_TOKENS.refine, abortSignal: request.signal });
             console.log(`[token-usage] refine  | input=${usage.input} output=${usage.output} total=${usage.total}`);
             return Response.json({ html: extractHtml(text), usage: { mode: "refine", calls: 1, ...usage } });
           }
@@ -451,21 +587,20 @@ Make ONLY the change the user asked for; leave the rest as-is.`;
           const platform = body.platform ?? "ios";
 
           // Phase 1: shared design system + screen manifest
-          const p1res = await runModel(model, systemPhase1(), `App idea: ${idea}\nTarget platform: ${platform}`);
+          const p1res = await runModel(model, systemPhase1(), `App idea: ${idea}\nTarget platform: ${platform}`, { maxOutputTokens: MAX_TOKENS.plan, abortSignal: request.signal });
           const p1raw = p1res.text;
           const p1 = extractJson(p1raw) as Phase1;
           if (!p1?.designSystemCss || !Array.isArray(p1.screens) || p1.screens.length === 0) {
             return Response.json({ error: "Phase 1 output invalid", raw: p1raw.slice(0, 500) }, { status: 502 });
           }
 
-          // Phase 2: per-screen HTML in parallel
-          const screensRaw = [];
-          for (const [i, s] of p1.screens.entries()) {
-              const others = p1.screens.map((x, idx) => `${idx + 1}. ${x.name} — ${x.role}`).join("\n");
-              const prompt = `App: ${p1.name} (${p1.platform})\nIdea: ${idea}\n\nAll screens in this app:\n${others}\n\nGenerate screen #${i + 1}: "${s.name}" (role: ${s.role}, id: ${s.id}).\n\nDesign system CSS you MUST use:\n${p1.designSystemCss}`;
-              const r2 = await runModel(model, systemPhase2(), prompt);
-              screensRaw.push({ id: s.id, name: s.name, role: s.role, html: extractHtml(r2.text), usage: r2.usage });
-          }
+          // Phase 2: per-screen HTML, actually in parallel (bounded concurrency).
+          const p2others = p1.screens.map((x, idx) => `${idx + 1}. ${x.name} — ${x.role}`).join("\n");
+          const screensRaw = await mapWithConcurrency(p1.screens, SCREEN_CONCURRENCY, async (s, i) => {
+            const prompt = `App: ${p1.name} (${p1.platform})\nIdea: ${idea}\n\nAll screens in this app:\n${p2others}\n\nGenerate screen #${i + 1}: "${s.name}" (role: ${s.role}, id: ${s.id}).\n\nDesign system CSS you MUST use:\n${p1.designSystemCss}`;
+            const r2 = await runModel(model, systemPhase2(), prompt, { maxOutputTokens: MAX_TOKENS.screen, abortSignal: request.signal });
+            return { id: s.id, name: s.name, role: s.role, html: extractHtml(r2.text), usage: r2.usage };
+          });
           const screensOut = screensRaw.map(({ usage: _u, ...s }) => s);
 
           // Aggregate token usage: phase 1 + every phase-2 screen call.
