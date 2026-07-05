@@ -18,6 +18,7 @@ import {
   CreditCard,
   Download,
   Figma,
+  Globe,
   HelpCircle,
   Image as ImageIcon,
   Loader2,
@@ -26,6 +27,7 @@ import {
   MonitorPlay,
   Moon,
   Plug,
+  Plus,
   Redo2,
   Settings,
   Share2,
@@ -33,10 +35,11 @@ import {
   Sparkles,
   Undo2,
   User as UserIcon,
+  Wand2,
   X,
   Zap,
 } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type Dispatch, type MouseEvent as ReactMouseEvent, type SetStateAction } from "react";
 import { toast } from "sonner";
 
 // Pro-mode editor pieces (lazy — big bundle we only need on desktop).
@@ -44,8 +47,8 @@ const Canvas = lazy(() => import("@/components/editor/Canvas"));
 const LayersPanel = lazy(() => import("@/components/editor/LayersPanel"));
 const PropertiesPanel = lazy(() => import("@/components/editor/PropertiesPanel"));
 // Connect-mode (prototype) pieces — lazy.
-const FlowCanvas = lazy(() => import("@/components/flow/FlowCanvas"));
-const PrototypePanel = lazy(() => import("@/components/flow/PrototypePanel"));
+const FlowCanvas = lazy(() => import("@/components/flow/FlowCanvas")) as unknown as ComponentType<FlowCanvasProps>;
+const PrototypePanel = lazy(() => import("@/components/flow/PrototypePanel")) as unknown as ComponentType<PrototypePanelProps>;
 
 // Palette key → CSS variable name (matches Phase-1 system prompt).
 const PALETTE_CSS_VAR: Record<string, string> = {
@@ -70,6 +73,87 @@ export const Route = createFileRoute("/workspace")({
 });
 
 type ChatMsg = { role: "user" | "assistant"; text: string };
+type ProtoSelection = { screenId: string; elId: string } | null;
+type FlowCanvasProps = {
+  screens: Project["screens"];
+  css: string;
+  startScreen: string | null;
+  selection: ProtoSelection;
+  setSelection: Dispatch<SetStateAction<ProtoSelection>>;
+  selectedConnection: string | null;
+  setSelectedConnection: Dispatch<SetStateAction<string | null>>;
+  applyInteraction: (screenId: string, elId: string, attrs: Record<string, unknown>) => void;
+  clearInteraction: (screenId: string, elId: string) => void;
+  initialPositions?: Record<string, { x: number; y: number }>;
+  onPositions: (pos: Record<string, { x: number; y: number }>) => void;
+  onOpenScreen: (id: string) => void;
+};
+type PrototypePanelProps = {
+  screens: Project["screens"];
+  currentScreenId: string | null;
+  selection: ProtoSelection;
+  startScreen: string | null;
+  onSwitch: Dispatch<SetStateAction<string | null>>;
+  setProtoSelection: Dispatch<SetStateAction<ProtoSelection>>;
+  applyInteraction: (screenId: string, elId: string, attrs: Record<string, unknown>) => void;
+  clearInteraction: (screenId: string, elId: string) => void;
+  setStart: (screenId: string) => void;
+};
+type GenerationJob = {
+  id: string;
+  status: "queued" | "planning" | "generating" | "completed" | "failed" | "cancelled";
+  progress: string[];
+  project: Project | null;
+  error?: string;
+};
+
+const FALLBACK_DESIGN_SYSTEM: Project["designSystem"] = {
+  palette: {
+    background: "#0B0D12",
+    surface: "#151923",
+    text: "#F8FAFC",
+    muted: "#94A3B8",
+    accent: "#FF7A2F",
+    accentText: "#FFFFFF",
+  },
+  radius: "lg",
+  font: "Inter",
+};
+
+const FALLBACK_DESIGN_CSS = `:root{--bg:#0B0D12;--surface:#151923;--text:#F8FAFC;--muted:#94A3B8;--accent:#FF7A2F;--accent-text:#FFFFFF;--radius:18px;--font:Inter,system-ui,sans-serif}.screen{width:375px;height:812px;background:var(--bg);color:var(--text);font-family:var(--font);overflow:hidden}`;
+
+function normalizeProject(project: Project | null): Project | null {
+  if (!project) return null;
+  return {
+    ...project,
+    idea: project.idea || project.name || "Untitled project",
+    platform: project.platform ?? "ios",
+    designSystem: project.designSystem?.palette ? project.designSystem : FALLBACK_DESIGN_SYSTEM,
+    designSystemCss: project.designSystemCss || FALLBACK_DESIGN_CSS,
+    screens: (project.screens || []).map((screen, index) => ({
+      id: screen.id || `screen-${index + 1}`,
+      name: screen.name || `Screen ${index + 1}`,
+      role: screen.role || screen.name || `Screen ${index + 1}`,
+      html: screen.html || "",
+    })),
+  } as Project;
+}
+
+const AI_REQUEST_TIMEOUT_MS = 15_000;
+const AI_GENERATION_REQUEST_TIMEOUT_MS = 120_000;
+
+async function fetchAi(path: string, init: RequestInit, timeoutMs = AI_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(path, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (controller.signal.aborted) throw new Error("The AI request timed out. Try a smaller change or retry in a moment.");
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 function encodeShare(p: Project): string {
   const json = JSON.stringify(p);
@@ -183,25 +267,61 @@ function Workspace() {
   // ---- generation ----------------------------------------------------------
   const generate = useCallback(async (ideaText: string, plat: "ios" | "android") => {
     setStatus("generating");
-    setChat([{ role: "assistant", text: `Generating a ${plat === "ios" ? "iOS" : "Android"} concept for: "${ideaText}"…` }]);
+    setChat([
+      { role: "assistant", text: `Starting a ${plat === "ios" ? "iOS" : "Android"} generation job for: "${ideaText}"...` },
+    ]);
     try {
-      const res = await fetch("/api/generate", {
+      const startRes = await fetchAi("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "generate", idea: ideaText, platform: plat }),
+        body: JSON.stringify({ mode: "start-generation", idea: ideaText, platform: plat }),
       });
-      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
-      const { project: p } = (await res.json()) as { project: Project };
-      setProject(p);
-      setSelectedId(p.screens[0]?.id ?? null);
-      lastLoadedRef.current = null;
-      saveProject(p);
-      // Strip the ?idea param from the URL so a reload loads the saved project
-      // instead of regenerating from scratch.
+
+      if (!startRes.ok) throw new Error((await startRes.text()) || `HTTP ${startRes.status}`);
+      const { jobId } = (await startRes.json()) as { jobId: string };
+      let seenProgress = 0;
+      let lastScreenCount = 0;
+
       navigate({ to: "/workspace", search: {}, replace: true });
+
+      while (true) {
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        const statusRes = await fetchAi("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "generation-status", jobId }),
+        });
+
+        if (!statusRes.ok) throw new Error((await statusRes.text()) || `HTTP ${statusRes.status}`);
+        const { job } = (await statusRes.json()) as { job: GenerationJob };
+
+        const newProgress = job.progress.slice(seenProgress);
+        if (newProgress.length) {
+          seenProgress = job.progress.length;
+          setChat((c) => [...c, ...newProgress.map((text) => ({ role: "assistant" as const, text }))]);
+        }
+
+        if (job.project) {
+          const screens = job.project.screens.map((screen) => ({ ...screen, html: ensureIds(screen.html) }));
+          const projectSnapshot = normalizeProject({ ...job.project, screens } as Project)!;
+          setProject(projectSnapshot);
+          saveProject(projectSnapshot);
+          if (screens.length > lastScreenCount) {
+            setSelectedId((current) => current ?? screens[0]?.id ?? null);
+            lastScreenCount = screens.length;
+            lastLoadedRef.current = null;
+          }
+        }
+
+        if (job.status === "completed") break;
+        if (job.status === "failed" || job.status === "cancelled") {
+          throw new Error(job.error || `Generation ${job.status}`);
+        }
+      }
+
       setChat((c) => [
         ...c,
-        { role: "assistant", text: `Generated ${p.screens.length} screens for "${p.name}". Tell me what to change — colors, layout, copy, or edit directly in Pro mode.` },
+        { role: "assistant", text: "Generation complete. You can edit the app now." },
       ]);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -220,9 +340,10 @@ function Workspace() {
       if (share) {
         const p = decodeShare(share);
         if (p && p.screens?.[0]?.html) {
-          setProject(p);
-          setSelectedId(p.screens[0]?.id ?? null);
-          saveProject(p);
+          const normalized = normalizeProject(p)!;
+          setProject(normalized);
+          setSelectedId(normalized.screens[0]?.id ?? null);
+          saveProject(normalized);
           setChat([{ role: "assistant", text: `Loaded a shared project — "${p.name}".` }]);
           return;
         }
@@ -232,9 +353,10 @@ function Workspace() {
       if (projectIdParam) {
         const p = await loadProjectById(projectIdParam);
         if (p && p.screens?.[0]?.html) {
-          setProject(p);
-          setSelectedId(p.screens[0]?.id ?? null);
-          const cs = (p as any).canvas_state;
+          const normalized = normalizeProject(p)!;
+          setProject(normalized);
+          setSelectedId(normalized.screens[0]?.id ?? null);
+          const cs = (normalized as any).canvas_state;
           if (cs) useEditorStore.getState().restore(cs);
           setChat([{ role: "assistant", text: `Reopened "${p.name}". Pick up where you left off.` }]);
           return;
@@ -246,9 +368,10 @@ function Workspace() {
       if (savedIsCurrent) {
         // Load the saved project directly — NO AI call. Covers every reload path
         // (hard refresh, reopened tab, back-nav) even if ?idea is still in the URL.
-        setProject(saved);
-        setSelectedId(saved.screens[0]?.id ?? null);
-        const cs = (saved as any).canvas_state;
+        const normalized = normalizeProject(saved)!;
+        setProject(normalized);
+        setSelectedId(normalized.screens[0]?.id ?? null);
+        const cs = (normalized as any).canvas_state;
         if (cs) useEditorStore.getState().restore(cs);
       } else if (idea) {
         // Genuinely new idea (no matching saved project) → generate once.
@@ -377,7 +500,7 @@ function Workspace() {
       setChat((c) => [...c, { role: "user", text: instruction }]);
       setStatus("refining");
       try {
-        const res = await fetch("/api/generate", {
+        const res = await fetchAi("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -424,7 +547,7 @@ function Workspace() {
     setChat((c) => [...c, { role: "user", text: focused && liteSelLabel ? `${instruction}  ·  on ${liteSelLabel}` : instruction }]);
     setStatus("refining");
     try {
-      const res = await fetch("/api/generate", {
+      const res = await fetchAi("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -484,6 +607,80 @@ function Workspace() {
       return next;
     });
   }, []);
+
+  const applyGeneratedDesignSystem = useCallback(async (payload: { instruction?: string; sourceUrl?: string }) => {
+    if (!project || status !== "idle") return;
+    const isWebsite = (project as any)?.format_config?.artifactType === "website";
+    const snapshot = {
+      ...project,
+      screens: project.screens.map((screen) => screen.id === selectedId ? { ...screen, html: editorHtml } : screen),
+    } as Project;
+    setStatus("refining");
+    try {
+      const res = await fetchAi("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: isWebsite ? "website-design-system" : "design-system",
+          project: snapshot,
+          ...(isWebsite ? { screenHtml: selectedId ? editorHtml : snapshot.screens[0]?.html, websiteCss: snapshot.designSystemCss } : {}),
+          ...payload,
+        }),
+      }, AI_GENERATION_REQUEST_TIMEOUT_MS);
+      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+      const data = (await res.json()) as { designSystem: Project["designSystem"]; designSystemCss: string };
+      let nextScreens = snapshot.screens;
+      if (!isWebsite) {
+        const oldPalette = project.designSystem.palette;
+        const replacements = Object.entries(data.designSystem.palette)
+          .map(([key, value]) => [oldPalette[key as keyof typeof oldPalette], value] as const)
+          .filter(([oldValue, value]) => oldValue && value && oldValue !== value);
+        nextScreens = snapshot.screens.map((screen) => {
+          let html = screen.html;
+          for (const [oldValue, value] of replacements) html = html.split(oldValue).join(value);
+          return { ...screen, html };
+        });
+      }
+      const next = { ...snapshot, designSystem: data.designSystem, designSystemCss: data.designSystemCss, screens: nextScreens } as Project;
+      setProject(next);
+      saveProject(next);
+      toast.success(payload.sourceUrl ? "Applied AI style reference" : "Design system updated");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Design system update failed: ${message}`);
+    } finally {
+      setStatus("idle");
+    }
+  }, [editorHtml, project, selectedId, status]);
+
+  const addExtraScreen = useCallback(async (screenName: string, purpose: string) => {
+    if (!project || status !== "idle") return;
+    setStatus("generating");
+    try {
+      const snapshot = {
+        ...project,
+        screens: project.screens.map((screen) => screen.id === selectedId ? { ...screen, html: editorHtml } : screen),
+      } as Project;
+      const res = await fetchAi("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "extra-screen", project: snapshot, screenName, purpose }),
+      }, AI_GENERATION_REQUEST_TIMEOUT_MS);
+      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+      const { screen } = (await res.json()) as { screen: Project["screens"][number] };
+      const nextScreen = { ...screen, html: ensureIds(screen.html) };
+      const next = { ...snapshot, screens: [...snapshot.screens, nextScreen] } as Project;
+      setProject(next);
+      setSelectedId(nextScreen.id);
+      saveProject(next);
+      toast.success(`"${nextScreen.name}" generated`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Could not generate screen: ${message}`);
+    } finally {
+      setStatus("idle");
+    }
+  }, [editorHtml, project, selectedId, status]);
 
   function setPlatform(p: "ios" | "android") {
     if (!project) return;
@@ -795,11 +992,18 @@ function Workspace() {
               screens={project?.screens ?? []}
               selectedId={selectedId}
               onSelectScreen={setSelectedId}
+              onAddScreen={addExtraScreen}
               focusLabel={liteSel ? liteSelLabel : null}
               onClearFocus={() => setLiteSel(null)}
             />
           ) : (
-            <ThemePanel project={project} setPlatform={setPlatform} onPaletteChange={updatePaletteColor} />
+            <ThemePanel
+              project={project}
+              setPlatform={setPlatform}
+              onPaletteChange={updatePaletteColor}
+              onApplyDesignSystem={applyGeneratedDesignSystem}
+              isBusy={status !== "idle"}
+            />
           )}
 
           {mode === "pro" && project && (
@@ -1080,7 +1284,7 @@ function EmptyState({ isBusy }: { isBusy: boolean }) {
 
 function ChatPanel({
   project, chat, isBusy, status, input, setInput, refine, screens, selectedId, onSelectScreen,
-  focusLabel, onClearFocus,
+  onAddScreen, focusLabel, onClearFocus,
 }: {
   project: Project | null;
   chat: ChatMsg[];
@@ -1092,9 +1296,13 @@ function ChatPanel({
   screens: Project["screens"];
   selectedId: string | null;
   onSelectScreen: (id: string) => void;
+  onAddScreen: (screenName: string, purpose: string) => Promise<void>;
   focusLabel?: string | null;
   onClearFocus?: () => void;
 }) {
+  const [showAddScreen, setShowAddScreen] = useState(false);
+  const [screenName, setScreenName] = useState("");
+  const [screenPurpose, setScreenPurpose] = useState("");
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
@@ -1122,9 +1330,52 @@ function ChatPanel({
             {status === "generating" ? "Composing screens…" : "Applying refinement…"}
           </div>
         )}
-        {screens.length > 0 && !isBusy && (
+        {screens.length > 0 && (
           <div className="pt-2">
-            <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Screens</div>
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Screens</div>
+              <button
+                onClick={() => setShowAddScreen((v) => !v)}
+                disabled={isBusy}
+                className="flex items-center gap-1 text-[11px] font-medium text-brand hover:brightness-110 disabled:opacity-40"
+                data-testid="add-screen-toggle"
+              >
+                {showAddScreen ? <X className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
+                {showAddScreen ? "Cancel" : "Add"}
+              </button>
+            </div>
+            {showAddScreen && (
+              <div className="mb-2 space-y-2 rounded-xl border border-border bg-panel/40 p-2">
+                <input
+                  value={screenName}
+                  onChange={(e) => setScreenName(e.target.value)}
+                  placeholder="Settings, Profile, Notifications..."
+                  className="w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-xs outline-none focus:border-brand/60"
+                  data-testid="new-screen-name"
+                />
+                <input
+                  value={screenPurpose}
+                  onChange={(e) => setScreenPurpose(e.target.value)}
+                  placeholder="Purpose, content, or user goal"
+                  className="w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-xs outline-none focus:border-brand/60"
+                  data-testid="new-screen-purpose"
+                />
+                <button
+                  onClick={async () => {
+                    if (!screenName.trim()) return toast.error("Name the screen.");
+                    await onAddScreen(screenName.trim(), screenPurpose.trim());
+                    setShowAddScreen(false);
+                    setScreenName("");
+                    setScreenPurpose("");
+                  }}
+                  disabled={isBusy || !screenName.trim()}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+                  data-testid="confirm-add-screen"
+                >
+                  {isBusy ? <><Loader2 className="h-3 w-3 animate-spin" /> Generating...</> : <>Generate screen</>}
+                </button>
+              </div>
+            )}
             <div className="space-y-1">
               {screens.map((s, i) => (
                 <button
@@ -1190,29 +1441,96 @@ function ThemePanel({
   project,
   setPlatform,
   onPaletteChange,
+  onApplyDesignSystem,
+  isBusy,
 }: {
   project: Project | null;
   setPlatform: (p: "ios" | "android") => void;
   onPaletteChange?: (key: string, hex: string) => void;
+  onApplyDesignSystem: (payload: { instruction?: string; sourceUrl?: string }) => Promise<void>;
+  isBusy: boolean;
 }) {
   const [editSwatch, setEditSwatch] = useState<{ key: string; color: string; anchor: HTMLElement } | null>(null);
+  const [instruction, setInstruction] = useState("");
+  const [styleUrl, setStyleUrl] = useState("");
   const swatchRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const designSystem = project?.designSystem?.palette ? project.designSystem : FALLBACK_DESIGN_SYSTEM;
+  const isWebsite = project && (project as any)?.format_config?.artifactType === "website";
 
-  // Website imports: the palette editor rewrites app design-system variables
-  // (--bg, --accent…), which don't exist in captured site CSS. Show source
-  // info instead; colors are edited per-element via the Properties panel.
-  if (project && (project as any)?.format_config?.artifactType === "website") {
+  if (isWebsite) {
     const src = (project as any)?.format_config?.source?.url as string | undefined;
     const w = (project as any)?.format_config?.frame?.width ?? 1440;
     return (
       <div className="flex-1 overflow-y-auto p-4">
+        <div className="mb-3 rounded-xl border border-brand/30 bg-brand/5 p-3">
+          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-brand">
+            <Sparkles className="h-3 w-3" /> System Design
+          </div>
+          <div className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+            Restyle this website with AI-generated original CSS. Reference URLs are interpreted for mood and brand direction only; CSS is not cloned.
+          </div>
+          <div className="space-y-2">
+            <textarea
+              value={instruction}
+              onChange={(e) => setInstruction(e.target.value)}
+              rows={2}
+              placeholder="e.g. darker SaaS landing page, editorial luxury, playful fintech..."
+              className="w-full resize-none rounded-lg border border-border bg-surface px-3 py-2 text-xs outline-none focus:border-brand/60"
+              data-testid="ds-ai-prompt"
+            />
+            <button
+              onClick={async () => {
+                if (!instruction.trim()) return toast.error("Describe the design change.");
+                await onApplyDesignSystem({ instruction: instruction.trim() });
+                setInstruction("");
+              }}
+              disabled={isBusy || !instruction.trim()}
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand py-2 text-xs font-semibold text-white disabled:opacity-40"
+              data-testid="ds-ai-prompt-btn"
+            >
+              {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
+              Regenerate website theme
+            </button>
+          </div>
+          <div className="mt-3 space-y-2 border-t border-border pt-3">
+            <input
+              value={styleUrl}
+              onChange={(e) => setStyleUrl(e.target.value)}
+              placeholder="reference URL, e.g. https://stripe.com"
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs outline-none focus:border-brand/60"
+              data-testid="ds-ai-url"
+            />
+            <button
+              onClick={async () => {
+                if (!styleUrl.trim()) return toast.error("Enter a website URL.");
+                await onApplyDesignSystem({ sourceUrl: styleUrl.trim() });
+                setStyleUrl("");
+              }}
+              disabled={isBusy || !styleUrl.trim()}
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-panel py-2 text-xs font-semibold hover:bg-panel/80 disabled:opacity-40"
+              data-testid="ds-ai-url-btn"
+            >
+              {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Globe className="h-3 w-3" />}
+              Use as AI style reference
+            </button>
+          </div>
+        </div>
         <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Website import</div>
         <div className="rounded-xl border border-border bg-panel/40 p-3">
           <div className="truncate text-sm font-semibold">{project.name}</div>
           {src && <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{src}</div>}
           <div className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-            Captured at {w}px desktop width. Edit colors, typography and spacing per element
-            in Pro mode via the Properties panel, or select an element and ask the AI.
+            Captured at {w}px desktop width. AI theme updates replace the captured CSS while preserving page HTML and data-mae-id edit targets.
+          </div>
+        </div>
+        <div className="mb-3 mt-6 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Theme Snapshot</div>
+        <div className="rounded-xl border border-border bg-panel/40 p-3 text-xs text-muted-foreground">
+          <div className="flex justify-between gap-2"><span>Font</span><span className="truncate text-foreground">{designSystem.font}</span></div>
+          <div className="mt-1 flex justify-between gap-2"><span>Radius</span><span className="text-foreground">{designSystem.radius}</span></div>
+          <div className="mt-3 grid grid-cols-6 gap-1">
+            {Object.entries(designSystem.palette).map(([k, v]) => (
+              <div key={k} className="h-6 rounded border border-white/10" style={{ background: v }} title={`${k}: ${v}`} />
+            ))}
           </div>
         </div>
       </div>
@@ -1223,10 +1541,61 @@ function ThemePanel({
     <div className="flex-1 overflow-y-auto p-4">
       {project ? (
         <>
+          <div className="mb-3 rounded-xl border border-brand/30 bg-brand/5 p-3">
+            <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-brand">
+              <Sparkles className="h-3 w-3" /> System Design
+            </div>
+            <div className="space-y-2">
+              <textarea
+                value={instruction}
+                onChange={(e) => setInstruction(e.target.value)}
+                rows={2}
+                placeholder="e.g. make it darker, more premium, playful, editorial..."
+                className="w-full resize-none rounded-lg border border-border bg-surface px-3 py-2 text-xs outline-none focus:border-brand/60"
+                data-testid="ds-ai-prompt"
+              />
+              <button
+                onClick={async () => {
+                  if (!instruction.trim()) return toast.error("Describe the design change.");
+                  await onApplyDesignSystem({ instruction: instruction.trim() });
+                  setInstruction("");
+                }}
+                disabled={isBusy || !instruction.trim()}
+                className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand py-2 text-xs font-semibold text-white disabled:opacity-40"
+                data-testid="ds-ai-prompt-btn"
+              >
+                {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
+                Regenerate with AI
+              </button>
+            </div>
+            <div className="mt-3 space-y-2 border-t border-border pt-3">
+              <input
+                value={styleUrl}
+                onChange={(e) => setStyleUrl(e.target.value)}
+                placeholder="reference URL, e.g. https://stripe.com"
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs outline-none focus:border-brand/60"
+                data-testid="ds-ai-url"
+              />
+              <button
+                onClick={async () => {
+                  if (!styleUrl.trim()) return toast.error("Enter a website URL.");
+                  await onApplyDesignSystem({ sourceUrl: styleUrl.trim() });
+                  setStyleUrl("");
+                }}
+                disabled={isBusy || !styleUrl.trim()}
+                className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-panel py-2 text-xs font-semibold hover:bg-panel/80 disabled:opacity-40"
+                data-testid="ds-ai-url-btn"
+              >
+                {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Globe className="h-3 w-3" />}
+                Use as AI style reference
+              </button>
+            </div>
+          </div>
+
           <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Palette</div>
           <p className="mb-3 text-[10px] text-muted-foreground/60">Click any swatch to edit. Changes update all screens instantly.</p>
           <div className="grid grid-cols-3 gap-2">
-            {Object.entries(project.designSystem.palette).map(([k, v]) => (
+            {Object.entries(designSystem.palette).map(([k, v]) => (
               <div key={k} className="rounded-xl border border-border p-2">
                 <button
                   ref={(el) => { swatchRefs.current[k] = el; }}
@@ -1276,7 +1645,7 @@ function ThemePanel({
             ))}
           </div>
           <div className="mb-3 mt-6 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Typography</div>
-          <div className="rounded-xl border border-border bg-panel/40 p-3 text-sm">{project.designSystem.font}</div>
+          <div className="rounded-xl border border-border bg-panel/40 p-3 text-sm">{designSystem.font}</div>
         </>
       ) : (
         <div className="rounded-xl border border-dashed border-border p-4 text-center text-xs text-muted-foreground">

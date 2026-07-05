@@ -20,3 +20,13 @@ export function createGeminiProvider(apiKey: string) {
     },
   });
 }
+
+export function createOpenAiProvider(apiKey: string, baseURL = "https://api.openai.com/v1") {
+  return createOpenAICompatible({
+    name: "openai-compatible",
+    baseURL,
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+  });
+}
