@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { AlertCircle, Code2, FileUp, Loader2, Info } from "lucide-react";
 import { toast } from "sonner";
+import { readProjectArchive } from "@/lib/import-project-archive";
 import { saveProject } from "@/lib/project-store";
 import {
   LANGUAGES,
@@ -12,7 +13,7 @@ import {
   type LanguageId,
 } from "@/lib/import-code";
 
-const ACCEPT = LANGUAGES.filter((l) => l.available).flatMap((l) => l.exts).join(",");
+const ACCEPT = [...LANGUAGES.filter((l) => l.available).flatMap((l) => l.exts), ".zip"].join(",");
 
 function guessTitle(code: string, lang: LanguageId, filename?: string): string {
   if (filename) return filename.replace(/\.[^.]+$/, "");
@@ -39,22 +40,46 @@ export default function ImportCode({ onOpenProject }: { onOpenProject: (id: stri
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [uploadName, setUploadName] = useState<string | null>(null);
+  const [manifestProject, setManifestProject] = useState<Awaited<ReturnType<typeof readProjectArchive>>["project"] | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   function onPaste(next: string) {
     setCode(next);
     setError(null);
+    setManifestProject(null);
     // Auto-detect only while the user hasn't uploaded a file that fixed the type.
     if (!uploadName && next.trim()) setLang(detectLanguage(next));
   }
 
-  function onFile(file: File) {
+  async function onFile(file: File) {
+    if (file.name.toLowerCase().endsWith(".zip")) {
+      setBusy(true);
+      setError(null);
+      setWarnings([]);
+      try {
+        const archive = await readProjectArchive(file);
+        setCode(archive.code);
+        setUploadName(file.name);
+        setLang(archive.language);
+        setManifestProject(archive.project ?? null);
+        setWarnings(archive.warnings);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+        toast.error(`Import failed: ${message}`);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = () => {
       const text = String(reader.result || "");
       setCode(text);
       setUploadName(file.name);
       setError(null);
+      setManifestProject(null);
       const byExt = languageForFile(file.name);
       setLang(byExt ?? detectLanguage(text));
     };
@@ -69,6 +94,14 @@ export default function ImportCode({ onOpenProject }: { onOpenProject: (id: stri
     setError(null);
     setWarnings([]);
     try {
+      if (manifestProject) {
+        saveProject(manifestProject);
+        await new Promise((r) => setTimeout(r, 250));
+        toast.success(`Imported ${manifestProject.name} — opening editor`);
+        onOpenProject(manifestProject.id);
+        return;
+      }
+
       let html: string;
       let css = "";
       const def = LANGUAGES.find((l) => l.id === lang);
@@ -174,7 +207,7 @@ export default function ImportCode({ onOpenProject }: { onOpenProject: (id: stri
               className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0];
-                if (f) onFile(f);
+                if (f) void onFile(f);
                 e.target.value = "";
               }}
               data-testid="import-file-input"

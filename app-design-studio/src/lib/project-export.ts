@@ -1,4 +1,5 @@
 import { prettyCss, prettyHtml } from "@/lib/format-export";
+import { ROUNDTRIP_MANIFEST_PATH, createRoundtripManifest } from "@/lib/roundtrip-manifest";
 import type { Project } from "@/lib/screen-schema";
 
 export type ProjectExportFile = {
@@ -172,6 +173,10 @@ export async function buildVueProjectExport(project: Project): Promise<ProjectEx
 
   return [
     {
+      path: ROUNDTRIP_MANIFEST_PATH,
+      content: `${json(createRoundtripManifest(project, "vue"))}\n`,
+    },
+    {
       path: "package.json",
       content: `${json({
         name: pkg,
@@ -248,6 +253,10 @@ export async function buildAngularProjectExport(project: Project): Promise<Proje
   const pkg = packageName(project, "angular");
 
   return [
+    {
+      path: ROUNDTRIP_MANIFEST_PATH,
+      content: `${json(createRoundtripManifest(project, "angular"))}\n`,
+    },
     {
       path: "package.json",
       content: `${json({
