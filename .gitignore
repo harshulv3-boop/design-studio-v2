@@ -14,3 +14,4 @@ dist/
 .codebase-memory/
 # Generated evidence artifacts (before/after proof dumps)
 app-design-studio/scripts/.evidence/
+.ideavo/project
