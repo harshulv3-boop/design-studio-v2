@@ -45,7 +45,11 @@ export type DesignSystem = z.infer<typeof DesignSystemSchema>;
 // and sizes the frame to match (PhoneScreenRenderer isWebsite/frameWidth).
 // `pages` is the v2 multi-page hook: each cloned page maps to one screen.
 export const FormatConfigSchema = z.object({
-  artifactType: z.enum(["app", "website"]).default("app"),
+  // "figma" = a design imported from Figma (any dimensions). Renders on a
+  // plain canvas — no phone chrome — at the Figma frame's real size. Distinct
+  // from "website" (url-to-code: scrolling content, source URL) so Figma
+  // projects don't inherit website-specific UI.
+  artifactType: z.enum(["app", "website", "figma"]).default("app"),
   frame: z
     .object({
       width: z.number(),

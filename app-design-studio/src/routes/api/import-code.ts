@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { transform } from "sucrase";
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { angularTemplateToStaticHtml } from "@/lib/ir";
 
 /**
  * Import Code — server render step for sources that aren't already HTML.
@@ -34,7 +35,16 @@ const REACT_MODULES: Record<string, unknown> = {
   "react/jsx-dev-runtime": undefined,
 };
 
-async function renderReact(code: string): Promise<{ html: string; warnings: string[] }> {
+/** Screens recovered from a sleek.design React export (marker comment). */
+type ImportedScreen = { id: string; name: string; role: string; html: string };
+
+async function renderReact(code: string): Promise<{
+  html: string;
+  warnings: string[];
+  screens?: ImportedScreen[];
+  css?: string;
+  meta?: { name?: string; artifactType?: "app" | "website"; frame?: { w: number; h?: number } };
+}> {
   const src = (code || "").trim();
   if (!src) throw new HttpError(400, "Nothing to import — the code is empty.");
 
@@ -65,7 +75,10 @@ async function renderReact(code: string): Promise<{ html: string; warnings: stri
   const requireShim = (name: string) => {
     if (name in REACT_MODULES && REACT_MODULES[name]) return REACT_MODULES[name];
     if (name === "react-dom" || name === "react-dom/server") {
-      throw new HttpError(422, `"${name}" can't be imported — Import Code renders a single component, not a full app.`);
+      throw new HttpError(
+        422,
+        `"${name}" can't be imported — Import Code renders a single component, not a full app.`,
+      );
     }
     throw new HttpError(
       422,
@@ -74,7 +87,6 @@ async function renderReact(code: string): Promise<{ html: string; warnings: stri
   };
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     const factory = new Function("module", "exports", "require", js) as (
       m: typeof moduleObj,
       e: Record<string, unknown>,
@@ -84,6 +96,47 @@ async function renderReact(code: string): Promise<{ html: string; warnings: stri
   } catch (e) {
     if (e instanceof HttpError) throw e;
     throw new HttpError(422, `The component couldn't be evaluated: ${errMsg(e)}`);
+  }
+
+  // Our own real-JSX export carries a marker comment with screen metadata —
+  // render each listed screen component separately so the project comes back
+  // with every screen's identity (id/name/role) and the design CSS intact.
+  const marker = src.match(/sleek\.design react export v1 (\{.*\})/);
+  if (marker) {
+    try {
+      const meta = JSON.parse(marker[1]) as {
+        name?: string;
+        artifactType?: "app" | "website";
+        frame?: { w: number; h?: number };
+        screens: { id: string; name: string; role: string; export: string }[];
+      };
+      const css =
+        typeof moduleObj.exports.DESIGN_SYSTEM_CSS === "string"
+          ? (moduleObj.exports.DESIGN_SYSTEM_CSS as string)
+          : "";
+      const screens: ImportedScreen[] = [];
+      for (const s of meta.screens) {
+        const fn = moduleObj.exports[s.export];
+        if (typeof fn !== "function") continue;
+        screens.push({
+          id: s.id,
+          name: s.name,
+          role: s.role,
+          html: renderToStaticMarkup(React.createElement(fn as React.FC)),
+        });
+      }
+      if (screens.length) {
+        return {
+          html: screens.map((s) => s.html).join("\n"),
+          css,
+          screens,
+          meta: { name: meta.name, artifactType: meta.artifactType, frame: meta.frame },
+          warnings: [],
+        };
+      }
+    } catch {
+      // Fall through to the generic path — a malformed marker never blocks import.
+    }
   }
 
   // Collect EVERY exported component, not just the first. Our own React (TSX)
@@ -138,10 +191,14 @@ async function renderReact(code: string): Promise<{ html: string; warnings: stri
     "Best-effort import: interactivity (event handlers, effects, state changes) was stripped — the static structure and styling are preserved.",
   ];
   if (components.length > 1) {
-    warnings.push(`Rendered ${rendered.length} component${rendered.length === 1 ? "" : "s"} into one canvas.`);
+    warnings.push(
+      `Rendered ${rendered.length} component${rendered.length === 1 ? "" : "s"} into one canvas.`,
+    );
   }
   if (skipped.length) {
-    warnings.push(`Skipped ${skipped.length} component(s) that couldn't render standalone: ${skipped.join(", ")}.`);
+    warnings.push(
+      `Skipped ${skipped.length} component(s) that couldn't render standalone: ${skipped.join(", ")}.`,
+    );
   }
 
   return { html: rendered.join("\n"), warnings };
@@ -170,16 +227,21 @@ async function renderVue(code: string): Promise<{ html: string; css: string; war
     throw new HttpError(422, `Could not parse the Vue component: ${errMsg(e)}`);
   }
 
-  const css = descriptor.styles.map((s) => s.content).join("\n").trim();
+  const css = descriptor.styles
+    .map((s) => s.content)
+    .join("\n")
+    .trim();
 
   const evalModule = (js: string, what: string): Record<string, unknown> => {
     const moduleObj: { exports: Record<string, unknown> } = { exports: {} };
     const requireShim = (name: string) => {
       if (name === "vue") return Vue;
-      throw new HttpError(422, `Can't resolve import "${name}". Import Code renders self-contained components only — remove external dependencies.`);
+      throw new HttpError(
+        422,
+        `Can't resolve import "${name}". Import Code renders self-contained components only — remove external dependencies.`,
+      );
     };
     try {
-      // eslint-disable-next-line @typescript-eslint/no-implied-eval
       new Function("module", "exports", "require", js)(moduleObj, moduleObj.exports, requireShim);
     } catch (e) {
       if (e instanceof HttpError) throw e;
@@ -194,17 +256,30 @@ async function renderVue(code: string): Promise<{ html: string; css: string; war
     if (descriptor.scriptSetup) {
       // <script setup> — compile it (with the template inlined) into a component.
       const compiled = sfc.compileScript(descriptor, { id, inlineTemplate: true });
-      const js = transform(compiled.content, { transforms: ["typescript", "imports"], production: true }).code;
+      const js = transform(compiled.content, {
+        transforms: ["typescript", "imports"],
+        production: true,
+      }).code;
       component = (evalModule(js, "script setup").default as Record<string, unknown>) || {};
     } else {
       // Options API (or template-only): eval <script>, compile <template> → render.
       if (descriptor.script) {
-        const js = transform(descriptor.script.content, { transforms: ["typescript", "imports"], production: true }).code;
+        const js = transform(descriptor.script.content, {
+          transforms: ["typescript", "imports"],
+          production: true,
+        }).code;
         component = (evalModule(js, "script").default as Record<string, unknown>) || {};
       }
       if (descriptor.template && !component.render) {
-        const tpl = sfc.compileTemplate({ source: descriptor.template.content, id, filename: "import.vue" });
-        if (tpl.errors.length) throw new HttpError(422, `Could not compile the Vue template: ${String(tpl.errors[0])}`);
+        const tpl = sfc.compileTemplate({
+          source: descriptor.template.content,
+          id,
+          filename: "import.vue",
+          // Preserve whitespace so re-imported sleek exports stay DOM-equal.
+          compilerOptions: { whitespace: "preserve" },
+        });
+        if (tpl.errors.length)
+          throw new HttpError(422, `Could not compile the Vue template: ${String(tpl.errors[0])}`);
         const tjs = transform(tpl.code, { transforms: ["imports"], production: true }).code;
         component.render = evalModule(tjs, "template").render;
       }
@@ -215,7 +290,10 @@ async function renderVue(code: string): Promise<{ html: string; css: string; war
   }
 
   if (!component.render && !component.template && !component.setup) {
-    throw new HttpError(422, "No renderable Vue component found (need a <template> or a render/setup).");
+    throw new HttpError(
+      422,
+      "No renderable Vue component found (need a <template> or a render/setup).",
+    );
   }
 
   let html: string;
@@ -228,7 +306,8 @@ async function renderVue(code: string): Promise<{ html: string; css: string; war
       `The Vue component threw while rendering: ${errMsg(e)}. Import Code supports components that render standalone — without required props, external data, or stores.`,
     );
   }
-  if (!html.replace(/\s+/g, "")) throw new HttpError(422, "The Vue component rendered nothing (empty output).");
+  if (!html.replace(/\s+/g, ""))
+    throw new HttpError(422, "The Vue component rendered nothing (empty output).");
 
   // Strip Vue's SSR fragment/anchor comments (hydration markers) — we import a
   // static snapshot, so they're just noise.
@@ -237,7 +316,9 @@ async function renderVue(code: string): Promise<{ html: string; css: string; war
   return {
     html,
     css,
-    warnings: ["Best-effort import: interactivity (event handlers, watchers, transitions) was stripped — structure and styling are preserved."],
+    warnings: [
+      "Best-effort import: interactivity (event handlers, watchers, transitions) was stripped — structure and styling are preserved.",
+    ],
   };
 }
 
@@ -254,14 +335,22 @@ function extractString(src: string, key: string): string | null {
   const m = src.match(re);
   return m ? (m[2] ?? m[3] ?? m[4] ?? "") : null;
 }
-function renderAngular(code: string): { html: string; css: string; warnings: string[] } {
+async function renderAngular(
+  code: string,
+): Promise<{ html: string; css: string; warnings: string[] }> {
   const src = (code || "").trim();
   if (!src) throw new HttpError(400, "Nothing to import — the code is empty.");
   if (!/@Component\s*\(/.test(src)) {
-    throw new HttpError(422, "No @Component found. Paste an Angular component with an inline `template`.");
+    throw new HttpError(
+      422,
+      "No @Component found. Paste an Angular component with an inline `template`.",
+    );
   }
   if (/templateUrl\s*:/.test(src) && extractString(src, "template") === null) {
-    throw new HttpError(422, "This Angular component uses an external templateUrl — paste one with an inline `template` so it can be rendered.");
+    throw new HttpError(
+      422,
+      "This Angular component uses an external templateUrl — paste one with an inline `template` so it can be rendered.",
+    );
   }
   let template = extractString(src, "template");
   if (template === null) throw new HttpError(422, "No inline Angular `template` found to render.");
@@ -271,31 +360,39 @@ function renderAngular(code: string): { html: string; css: string; warnings: str
   const stylesBlock = src.match(/styles\s*:\s*\[([\s\S]*?)\]/);
   if (stylesBlock) {
     css = [...stylesBlock[1].matchAll(/`([\s\S]*?)`|'([^']*)'|"([^"]*)"/g)]
-      .map((m) => m[1] ?? m[2] ?? m[3] ?? "").join("\n").trim();
+      .map((m) => m[1] ?? m[2] ?? m[3] ?? "")
+      .join("\n")
+      .trim();
   }
 
   // Resolve simple {{ field }} from `field = 'value'` / `field = 42` initializers.
   const fields: Record<string, string> = {};
-  for (const m of src.matchAll(/(\w+)\s*(?::\s*[^=;{]+)?=\s*(?:'([^']*)'|"([^"]*)"|`([^`]*)`|(\d+(?:\.\d+)?))\s*[;\n]/g)) {
+  for (const m of src.matchAll(
+    /(\w+)\s*(?::\s*[^=;{]+)?=\s*(?:'([^']*)'|"([^"]*)"|`([^`]*)`|(\d+(?:\.\d+)?))\s*[;\n]/g,
+  )) {
     fields[m[1]] = m[2] ?? m[3] ?? m[4] ?? m[5] ?? "";
   }
-  template = template
-    .replace(/\{\{\s*([\w.]+)\s*\}\}/g, (full, name) => (name in fields ? fields[name] : ""))
-    // Strip Angular-only attributes/directives so they don't leak into the HTML.
-    .replace(/\s\*ng[A-Za-z]+="[^"]*"/g, "")
-    .replace(/\s\[\(?[\w.@-]+\)?\]="[^"]*"/g, "")
-    .replace(/\s\([\w.@-]+\)="[^"]*"/g, "")
-    .replace(/\s#[\w-]+(=("[^"]*"|'[^']*'))?/g, "")
-    .replace(/\{\{[^}]*\}\}/g, "")
-    .trim();
+  // Real compiler-based conversion: parse the template with @angular/compiler
+  // and render it statically — exact for our own exports' constant bindings,
+  // best-effort for arbitrary components (bindings resolve from the literal
+  // field initializers above or are dropped with a warning).
+  let converted: { html: string; warnings: string[] };
+  try {
+    converted = await angularTemplateToStaticHtml(template, fields);
+  } catch (e) {
+    throw new HttpError(422, errMsg(e));
+  }
+  template = converted.html.trim();
 
-  if (!template.replace(/\s+/g, "")) throw new HttpError(422, "The Angular template was empty after extraction.");
+  if (!template.replace(/\s+/g, ""))
+    throw new HttpError(422, "The Angular template was empty after extraction.");
 
   return {
     html: template,
     css,
     warnings: [
-      "Best-effort Angular import: the inline template and styles were extracted, and simple {{field}} text was filled in, but bindings, directives, and dynamic data are not evaluated (Angular needs its full runtime to render).",
+      "Best-effort Angular import: template parsed with the Angular compiler; dynamic bindings and directives are resolved statically or stripped.",
+      ...converted.warnings,
     ],
   };
 }
@@ -304,13 +401,18 @@ function renderAngular(code: string): { html: string; css: string; warnings: str
 // a PascalCase component. Conservative: skips if any export already exists.
 function ensureDefaultExport(src: string): string {
   if (/\bexport\s+(default|\{|const|function|class)\b/.test(src)) return src;
-  const names = [...src.matchAll(/(?:function|const|class)\s+([A-Z][A-Za-z0-9_]*)/g)].map((m) => m[1]);
+  const names = [...src.matchAll(/(?:function|const|class)\s+([A-Z][A-Za-z0-9_]*)/g)].map(
+    (m) => m[1],
+  );
   const last = names[names.length - 1];
   return last ? `${src}\nexport default ${last};` : src;
 }
 
 class HttpError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
     super(message);
   }
 }
@@ -333,14 +435,20 @@ export const Route = createFileRoute("/api/import-code")({
           switch (language) {
             case "react": {
               const out = await renderReact(body.code || "");
-              return Response.json({ html: out.html, css: "", warnings: out.warnings });
+              return Response.json({
+                html: out.html,
+                css: out.css || "",
+                screens: out.screens,
+                meta: out.meta,
+                warnings: out.warnings,
+              });
             }
             case "vue": {
               const out = await renderVue(body.code || "");
               return Response.json({ html: out.html, css: out.css, warnings: out.warnings });
             }
             case "angular": {
-              const out = renderAngular(body.code || "");
+              const out = await renderAngular(body.code || "");
               return Response.json({ html: out.html, css: out.css, warnings: out.warnings });
             }
             default:

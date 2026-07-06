@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WorkspaceRouteImport } from './routes/workspace'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiImportFigmaRouteImport } from './routes/api/import-figma'
 import { Route as ApiImportCodeRouteImport } from './routes/api/import-code'
 import { Route as ApiGenerateRouteImport } from './routes/api/generate'
 import { Route as ApiCloneSplatRouteImport } from './routes/api/clone.$'
@@ -23,6 +24,11 @@ const WorkspaceRoute = WorkspaceRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiImportFigmaRoute = ApiImportFigmaRouteImport.update({
+  id: '/api/import-figma',
+  path: '/api/import-figma',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiImportCodeRoute = ApiImportCodeRouteImport.update({
@@ -46,6 +52,7 @@ export interface FileRoutesByFullPath {
   '/workspace': typeof WorkspaceRoute
   '/api/generate': typeof ApiGenerateRoute
   '/api/import-code': typeof ApiImportCodeRoute
+  '/api/import-figma': typeof ApiImportFigmaRoute
   '/api/clone/$': typeof ApiCloneSplatRoute
 }
 export interface FileRoutesByTo {
@@ -53,6 +60,7 @@ export interface FileRoutesByTo {
   '/workspace': typeof WorkspaceRoute
   '/api/generate': typeof ApiGenerateRoute
   '/api/import-code': typeof ApiImportCodeRoute
+  '/api/import-figma': typeof ApiImportFigmaRoute
   '/api/clone/$': typeof ApiCloneSplatRoute
 }
 export interface FileRoutesById {
@@ -61,20 +69,33 @@ export interface FileRoutesById {
   '/workspace': typeof WorkspaceRoute
   '/api/generate': typeof ApiGenerateRoute
   '/api/import-code': typeof ApiImportCodeRoute
+  '/api/import-figma': typeof ApiImportFigmaRoute
   '/api/clone/$': typeof ApiCloneSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/workspace' | '/api/generate' | '/api/import-code' | '/api/clone/$'
+    | '/'
+    | '/workspace'
+    | '/api/generate'
+    | '/api/import-code'
+    | '/api/import-figma'
+    | '/api/clone/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/workspace' | '/api/generate' | '/api/import-code' | '/api/clone/$'
+  to:
+    | '/'
+    | '/workspace'
+    | '/api/generate'
+    | '/api/import-code'
+    | '/api/import-figma'
+    | '/api/clone/$'
   id:
     | '__root__'
     | '/'
     | '/workspace'
     | '/api/generate'
     | '/api/import-code'
+    | '/api/import-figma'
     | '/api/clone/$'
   fileRoutesById: FileRoutesById
 }
@@ -83,6 +104,7 @@ export interface RootRouteChildren {
   WorkspaceRoute: typeof WorkspaceRoute
   ApiGenerateRoute: typeof ApiGenerateRoute
   ApiImportCodeRoute: typeof ApiImportCodeRoute
+  ApiImportFigmaRoute: typeof ApiImportFigmaRoute
   ApiCloneSplatRoute: typeof ApiCloneSplatRoute
 }
 
@@ -100,6 +122,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/import-figma': {
+      id: '/api/import-figma'
+      path: '/api/import-figma'
+      fullPath: '/api/import-figma'
+      preLoaderRoute: typeof ApiImportFigmaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/import-code': {
@@ -131,6 +160,7 @@ const rootRouteChildren: RootRouteChildren = {
   WorkspaceRoute: WorkspaceRoute,
   ApiGenerateRoute: ApiGenerateRoute,
   ApiImportCodeRoute: ApiImportCodeRoute,
+  ApiImportFigmaRoute: ApiImportFigmaRoute,
   ApiCloneSplatRoute: ApiCloneSplatRoute,
 }
 export const routeTree = rootRouteImport

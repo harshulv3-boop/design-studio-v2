@@ -1,0 +1,12 @@
+{
+  "name": "sleek.design import",
+  "id": "sleek-design-import",
+  "api": "1.0.0",
+  "main": "dist/code.js",
+  "ui": "dist/ui.html",
+  "editorType": ["figma"],
+  "networkAccess": {
+    "allowedDomains": ["*"],
+    "reasoning": "Fetches image assets referenced by imported designs (any origin a cloned website may use) and, in dev, the local sleek.design studio."
+  }
+}

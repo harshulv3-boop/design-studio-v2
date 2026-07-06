@@ -2,7 +2,15 @@ import { PhoneScreenFrame } from "@/components/PhoneScreenFrame";
 import ColorPickerComponent from "@/components/editor/ColorPicker";
 import { remapHtmlColors } from "@/lib/color-remap";
 import { prettyCss, prettyHtml } from "@/lib/format-export";
-import { buildAngularProjectExport, buildVueProjectExport, createProjectZip } from "@/lib/project-export";
+import { createProjectZip } from "@/lib/project-export";
+import {
+  buildAngularProjectExport,
+  buildFigmaExport,
+  buildHtmlExport,
+  buildReactTsx,
+  buildReactProjectExport,
+  buildVueProjectExport,
+} from "@/lib/ir";
 import { ensureIds } from "@/lib/pro/htmlUtils";
 import { applyInteractionToHtml, clearInteractionFromHtml } from "@/lib/pro/prototype";
 import { loadProject, loadProjectById, saveProject } from "@/lib/project-store";
@@ -40,7 +48,19 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type Dispatch, type MouseEvent as ReactMouseEvent, type SetStateAction } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type Dispatch,
+  type MouseEvent as ReactMouseEvent,
+  type SetStateAction,
+} from "react";
 import { toast } from "sonner";
 
 // Pro-mode editor pieces (lazy — big bundle we only need on desktop).
@@ -48,8 +68,12 @@ const Canvas = lazy(() => import("@/components/editor/Canvas"));
 const LayersPanel = lazy(() => import("@/components/editor/LayersPanel"));
 const PropertiesPanel = lazy(() => import("@/components/editor/PropertiesPanel"));
 // Connect-mode (prototype) pieces — lazy.
-const FlowCanvas = lazy(() => import("@/components/flow/FlowCanvas")) as unknown as ComponentType<FlowCanvasProps>;
-const PrototypePanel = lazy(() => import("@/components/flow/PrototypePanel")) as unknown as ComponentType<PrototypePanelProps>;
+const FlowCanvas = lazy(
+  () => import("@/components/flow/FlowCanvas"),
+) as unknown as ComponentType<FlowCanvasProps>;
+const PrototypePanel = lazy(
+  () => import("@/components/flow/PrototypePanel"),
+) as unknown as ComponentType<PrototypePanelProps>;
 
 // Palette key → CSS variable name (matches Phase-1 system prompt).
 const PALETTE_CSS_VAR: Record<string, string> = {
@@ -149,7 +173,8 @@ async function fetchAi(path: string, init: RequestInit, timeoutMs = AI_REQUEST_T
   try {
     return await fetch(path, { ...init, signal: controller.signal });
   } catch (err) {
-    if (controller.signal.aborted) throw new Error("The AI request timed out. Try a smaller change or retry in a moment.");
+    if (controller.signal.aborted)
+      throw new Error("The AI request timed out. Try a smaller change or retry in a moment.");
     throw err;
   } finally {
     clearTimeout(timeout);
@@ -188,7 +213,9 @@ function Workspace() {
     typeof window !== "undefined" && window.innerWidth >= 1024 ? "pro" : "lite",
   );
   // Connect (prototype) mode state.
-  const [protoSelection, setProtoSelection] = useState<{ screenId: string; elId: string } | null>(null);
+  const [protoSelection, setProtoSelection] = useState<{ screenId: string; elId: string } | null>(
+    null,
+  );
   // Lite-mode element selection: click an element to target it for AI edits.
   const [liteSel, setLiteSel] = useState<{ screenId: string; elId: string } | null>(null);
   const [selectedConnection, setSelectedConnection] = useState<string | null>(null);
@@ -230,7 +257,7 @@ function Workspace() {
   // update — generation, refine, undo elsewhere — is picked up live, exactly
   // like Lite reads project.screens[].html live every render.
   const selectedHtml = selectedId
-    ? project?.screens.find((x) => x.id === selectedId)?.html ?? ""
+    ? (project?.screens.find((x) => x.id === selectedId)?.html ?? "")
     : "";
   useEffect(() => {
     if (!project || !selectedId) return;
@@ -269,7 +296,10 @@ function Workspace() {
   const generate = useCallback(async (ideaText: string, plat: "ios" | "android") => {
     setStatus("generating");
     setChat([
-      { role: "assistant", text: `Starting a ${plat === "ios" ? "iOS" : "Android"} generation job for: "${ideaText}"...` },
+      {
+        role: "assistant",
+        text: `Starting a ${plat === "ios" ? "iOS" : "Android"} generation job for: "${ideaText}"...`,
+      },
     ]);
     try {
       const startRes = await fetchAi("/api/generate", {
@@ -306,7 +336,10 @@ function Workspace() {
         const newProgress = job.progress.slice(seenProgress);
         if (newProgress.length) {
           seenProgress = job.progress.length;
-          setChat((c) => [...c, ...newProgress.map((text) => ({ role: "assistant" as const, text }))]);
+          setChat((c) => [
+            ...c,
+            ...newProgress.map((text) => ({ role: "assistant" as const, text })),
+          ]);
         }
 
         if (job.project) {
@@ -379,7 +412,9 @@ function Workspace() {
           setSelectedId(normalized.screens[0]?.id ?? null);
           const cs = (normalized as any).canvas_state;
           if (cs) useEditorStore.getState().restore(cs);
-          setChat([{ role: "assistant", text: `Reopened "${p.name}". Pick up where you left off.` }]);
+          setChat([
+            { role: "assistant", text: `Reopened "${p.name}". Pick up where you left off.` },
+          ]);
           return;
         }
         toast.error("That project could not be found.");
@@ -399,7 +434,9 @@ function Workspace() {
         generate(idea, platformParam ?? "ios");
       } else if (saved) {
         // Legacy block-based project — retire it silently.
-        toast.message("Your previous project was on an older format", { description: "Start a new one to use the HTML editor." });
+        toast.message("Your previous project was on an older format", {
+          description: "Start a new one to use the HTML editor.",
+        });
       }
     })();
   }, [idea, platformParam, share, projectIdParam, generate]);
@@ -423,7 +460,10 @@ function Workspace() {
   //    flash "Saving…" on open.
   useEffect(() => {
     if (!project) return;
-    if (!didInitSaveRef.current) { didInitSaveRef.current = true; return; }
+    if (!didInitSaveRef.current) {
+      didInitSaveRef.current = true;
+      return;
+    }
     markSaving();
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
@@ -431,7 +471,9 @@ function Workspace() {
       saveProject({ ...(project as any), canvas_state: cs } as Project);
       markSaved();
     }, 450);
-    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
   }, [project]);
 
   // 2) Editor-only metadata (zoom / pan / layer names / locks / hidden /
@@ -443,10 +485,14 @@ function Workspace() {
       if (t) clearTimeout(t);
       t = setTimeout(() => {
         const cs = (useEditorStore.getState() as any).canvasState?.();
-        if (projectRef.current) saveProject({ ...(projectRef.current as any), canvas_state: cs } as Project);
+        if (projectRef.current)
+          saveProject({ ...(projectRef.current as any), canvas_state: cs } as Project);
       }, 700);
     });
-    return () => { if (t) clearTimeout(t); unsub(); };
+    return () => {
+      if (t) clearTimeout(t);
+      unsub();
+    };
   }, []);
 
   // 3) When undo/redo restores a palette CSS snapshot, sync it back into React
@@ -481,7 +527,9 @@ function Workspace() {
   function handleShare() {
     if (!project) return;
     if ((project as any)?.format_config?.artifactType === "website") {
-      toast.message("Sharing isn't available for website imports yet", { description: "The page payload is too large for a share link." });
+      toast.message("Sharing isn't available for website imports yet", {
+        description: "The page payload is too large for a share link.",
+      });
       return;
     }
     const link = `${window.location.origin}/workspace?share=${encodeShare(project)}`;
@@ -502,15 +550,22 @@ function Workspace() {
     // canvas selection) and the result is spliced back by data-mae-id.
     if ((project as any)?.format_config?.artifactType === "website") {
       const proSel = (useEditorStore.getState() as any).selectedId as string | null;
-      const elId = liteSel && liteSel.screenId === selectedId ? liteSel.elId : mode === "pro" ? proSel : null;
+      const elId =
+        liteSel && liteSel.screenId === selectedId ? liteSel.elId : mode === "pro" ? proSel : null;
       if (!elId) {
         setChat((c) => [
           ...c,
-          { role: "assistant", text: "Select an element first — click one in Lite mode or select it on the Pro canvas — then tell me what to change." },
+          {
+            role: "assistant",
+            text: "Select an element first — click one in Lite mode or select it on the Pro canvas — then tell me what to change.",
+          },
         ]);
         return;
       }
-      const doc = new DOMParser().parseFromString(`<div id="__r">${screen.html}</div>`, "text/html");
+      const doc = new DOMParser().parseFromString(
+        `<div id="__r">${screen.html}</div>`,
+        "text/html",
+      );
       const el = doc.querySelector(`#__r [data-mae-id="${CSS.escape(elId)}"]`);
       if (!el) {
         toast.error("Selected element not found — try selecting it again.");
@@ -520,7 +575,10 @@ function Workspace() {
       if (elementHtml.length > 60000) {
         setChat((c) => [
           ...c,
-          { role: "assistant", text: "That element is too large for an AI edit — select something more specific inside it (use the Layers panel)." },
+          {
+            role: "assistant",
+            text: "That element is too large for an AI edit — select something more specific inside it (use the Layers panel).",
+          },
         ]);
         return;
       }
@@ -528,16 +586,20 @@ function Workspace() {
       setChat((c) => [...c, { role: "user", text: instruction }]);
       setStatus("refining");
       try {
-        const res = await fetchAi("/api/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            mode: "refine-element",
-            instruction,
-            elementHtml,
-            projectContext: { name: project.name, platform: "web" },
-          }),
-        }, AI_GENERATION_REQUEST_TIMEOUT_MS);
+        const res = await fetchAi(
+          "/api/generate",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: "refine-element",
+              instruction,
+              elementHtml,
+              projectContext: { name: project.name, platform: "web" },
+            }),
+          },
+          AI_GENERATION_REQUEST_TIMEOUT_MS,
+        );
         if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
         const { html } = (await res.json()) as { html: string };
         const frag = new DOMParser().parseFromString(`<div id="__f">${html}</div>`, "text/html");
@@ -572,20 +634,30 @@ function Workspace() {
       ? `${instruction}\n\n[Apply this change ONLY to the element with data-mae-id="${liteSel!.elId}"${liteSelLabel ? ` (the ${liteSelLabel})` : ""}. Keep every other element in the screen exactly as-is, including their data-mae-id attributes.]`
       : instruction;
     setInput("");
-    setChat((c) => [...c, { role: "user", text: focused && liteSelLabel ? `${instruction}  ·  on ${liteSelLabel}` : instruction }]);
+    setChat((c) => [
+      ...c,
+      {
+        role: "user",
+        text: focused && liteSelLabel ? `${instruction}  ·  on ${liteSelLabel}` : instruction,
+      },
+    ]);
     setStatus("refining");
     try {
-      const res = await fetchAi("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: "refine",
-          instruction: sentInstruction,
-          screenHtml: screen.html,
-          designSystemCss: project.designSystemCss,
-          projectContext: { name: project.name, platform: project.platform },
-        }),
-      }, AI_GENERATION_REQUEST_TIMEOUT_MS);
+      const res = await fetchAi(
+        "/api/generate",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode: "refine",
+            instruction: sentInstruction,
+            screenHtml: screen.html,
+            designSystemCss: project.designSystemCss,
+            projectContext: { name: project.name, platform: project.platform },
+          }),
+        },
+        AI_GENERATION_REQUEST_TIMEOUT_MS,
+      );
       if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
       const { html } = (await res.json()) as { html: string };
       const withIds = ensureIds(html);
@@ -624,7 +696,10 @@ function Workspace() {
       const newPalette = { ...prev.designSystem.palette, [key]: hex };
       // Push old CSS/palette to the shared undo history before overwriting.
       (useEditorStore.getState() as any).commitDesignCss(
-        newCss, newPalette, prev.designSystemCss, prev.designSystem.palette,
+        newCss,
+        newPalette,
+        prev.designSystemCss,
+        prev.designSystem.palette,
       );
       const next = {
         ...prev,
@@ -636,85 +711,119 @@ function Workspace() {
     });
   }, []);
 
-  const applyGeneratedDesignSystem = useCallback(async (payload: { instruction?: string; sourceUrl?: string }) => {
-    if (!project || status !== "idle") return;
-    const isWebsite = (project as any)?.format_config?.artifactType === "website";
-    const snapshot = {
-      ...project,
-      screens: project.screens.map((screen) => screen.id === selectedId ? { ...screen, html: editorHtml } : screen),
-    } as Project;
-    setStatus("refining");
-    try {
-      const res = await fetchAi("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: isWebsite ? "website-design-system" : "design-system",
-          project: snapshot,
-          ...(isWebsite ? { screenHtml: selectedId ? editorHtml : snapshot.screens[0]?.html, websiteCss: snapshot.designSystemCss } : {}),
-          ...payload,
-        }),
-      }, AI_GENERATION_REQUEST_TIMEOUT_MS);
-      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
-      const data = (await res.json()) as { designSystem: Project["designSystem"]; designSystemCss: string };
-      const oldPalette = snapshot.designSystem.palette;
-      const newPalette = data.designSystem.palette;
-      // Screens hardcode inline colors instead of using CSS variables, so a new
-      // designSystemCss alone won't restyle them. Deterministically remap EVERY
-      // color in EVERY screen from the old palette to the new one (nearest-anchor
-      // + preserved offset) — this is what actually re-themes all screens
-      // consistently. Applies to native app AND website projects.
-      const nextScreens = snapshot.screens.map((screen) => ({
-        ...screen,
-        html: remapHtmlColors(screen.html, oldPalette, newPalette),
-      }));
-      const next = { ...snapshot, designSystem: data.designSystem, designSystemCss: data.designSystemCss, screens: nextScreens } as Project;
-      // Record the full restyle (old css + palette + all screens) in the shared
-      // undo history BEFORE applying, so Ctrl+Z / the toolbar buttons revert it.
-      (useEditorStore.getState() as any).commitDesignRestyle(
-        data.designSystemCss, newPalette,
-        snapshot.designSystemCss, oldPalette, snapshot.screens,
-      );
-      setProject(next);
-      saveProject(next);
-      lastLoadedRef.current = null; // reload editor from the remapped selected screen
-      toast.success(payload.sourceUrl ? "Applied AI style reference" : "Design system updated");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Design system update failed: ${message}`);
-    } finally {
-      setStatus("idle");
-    }
-  }, [editorHtml, project, selectedId, status]);
-
-  const addExtraScreen = useCallback(async (screenName: string, purpose: string) => {
-    if (!project || status !== "idle") return;
-    setStatus("generating");
-    try {
+  const applyGeneratedDesignSystem = useCallback(
+    async (payload: { instruction?: string; sourceUrl?: string }) => {
+      if (!project || status !== "idle") return;
+      const isWebsite = (project as any)?.format_config?.artifactType === "website";
       const snapshot = {
         ...project,
-        screens: project.screens.map((screen) => screen.id === selectedId ? { ...screen, html: editorHtml } : screen),
+        screens: project.screens.map((screen) =>
+          screen.id === selectedId ? { ...screen, html: editorHtml } : screen,
+        ),
       } as Project;
-      const res = await fetchAi("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "extra-screen", project: snapshot, screenName, purpose }),
-      }, AI_GENERATION_REQUEST_TIMEOUT_MS);
-      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
-      const { screen } = (await res.json()) as { screen: Project["screens"][number] };
-      const nextScreen = { ...screen, html: ensureIds(screen.html) };
-      const next = { ...snapshot, screens: [...snapshot.screens, nextScreen] } as Project;
-      setProject(next);
-      setSelectedId(nextScreen.id);
-      saveProject(next);
-      toast.success(`"${nextScreen.name}" generated`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Could not generate screen: ${message}`);
-    } finally {
-      setStatus("idle");
-    }
-  }, [editorHtml, project, selectedId, status]);
+      setStatus("refining");
+      try {
+        const res = await fetchAi(
+          "/api/generate",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: isWebsite ? "website-design-system" : "design-system",
+              project: snapshot,
+              ...(isWebsite
+                ? {
+                    screenHtml: selectedId ? editorHtml : snapshot.screens[0]?.html,
+                    websiteCss: snapshot.designSystemCss,
+                  }
+                : {}),
+              ...payload,
+            }),
+          },
+          AI_GENERATION_REQUEST_TIMEOUT_MS,
+        );
+        if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+        const data = (await res.json()) as {
+          designSystem: Project["designSystem"];
+          designSystemCss: string;
+        };
+        const oldPalette = snapshot.designSystem.palette;
+        const newPalette = data.designSystem.palette;
+        // Screens hardcode inline colors instead of using CSS variables, so a new
+        // designSystemCss alone won't restyle them. Deterministically remap EVERY
+        // color in EVERY screen from the old palette to the new one (nearest-anchor
+        // + preserved offset) — this is what actually re-themes all screens
+        // consistently. Applies to native app AND website projects.
+        const nextScreens = snapshot.screens.map((screen) => ({
+          ...screen,
+          html: remapHtmlColors(screen.html, oldPalette, newPalette),
+        }));
+        const next = {
+          ...snapshot,
+          designSystem: data.designSystem,
+          designSystemCss: data.designSystemCss,
+          screens: nextScreens,
+        } as Project;
+        // Record the full restyle (old css + palette + all screens) in the shared
+        // undo history BEFORE applying, so Ctrl+Z / the toolbar buttons revert it.
+        (useEditorStore.getState() as any).commitDesignRestyle(
+          data.designSystemCss,
+          newPalette,
+          snapshot.designSystemCss,
+          oldPalette,
+          snapshot.screens,
+        );
+        setProject(next);
+        saveProject(next);
+        lastLoadedRef.current = null; // reload editor from the remapped selected screen
+        toast.success(payload.sourceUrl ? "Applied AI style reference" : "Design system updated");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error(`Design system update failed: ${message}`);
+      } finally {
+        setStatus("idle");
+      }
+    },
+    [editorHtml, project, selectedId, status],
+  );
+
+  const addExtraScreen = useCallback(
+    async (screenName: string, purpose: string) => {
+      if (!project || status !== "idle") return;
+      setStatus("generating");
+      try {
+        const snapshot = {
+          ...project,
+          screens: project.screens.map((screen) =>
+            screen.id === selectedId ? { ...screen, html: editorHtml } : screen,
+          ),
+        } as Project;
+        const res = await fetchAi(
+          "/api/generate",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: "extra-screen", project: snapshot, screenName, purpose }),
+          },
+          AI_GENERATION_REQUEST_TIMEOUT_MS,
+        );
+        if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+        const { screen } = (await res.json()) as { screen: Project["screens"][number] };
+        const nextScreen = { ...screen, html: ensureIds(screen.html) };
+        const next = { ...snapshot, screens: [...snapshot.screens, nextScreen] } as Project;
+        setProject(next);
+        setSelectedId(nextScreen.id);
+        saveProject(next);
+        toast.success(`"${nextScreen.name}" generated`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error(`Could not generate screen: ${message}`);
+      } finally {
+        setStatus("idle");
+      }
+    },
+    [editorHtml, project, selectedId, status],
+  );
 
   function setPlatform(p: "ios" | "android") {
     if (!project) return;
@@ -734,34 +843,47 @@ function Workspace() {
     if (!project.screens.some((s) => s.html && !/data-mae-id/.test(s.html))) return;
     setProject((prev) => {
       if (!prev) return prev;
-      const next = { ...prev, screens: prev.screens.map((s) => ({ ...s, html: s.html ? ensureIds(s.html) : s.html })) };
+      const next = {
+        ...prev,
+        screens: prev.screens.map((s) => ({ ...s, html: s.html ? ensureIds(s.html) : s.html })),
+      };
       saveProject(next);
       return next;
     });
   }, [project]);
 
   useEffect(() => {
-    if (mode === "connect" && !connectScreenId && project?.screens[0]) setConnectScreenId(project.screens[0].id);
+    if (mode === "connect" && !connectScreenId && project?.screens[0])
+      setConnectScreenId(project.screens[0].id);
   }, [mode, connectScreenId, project]);
 
-  const applyInteraction = useCallback((screenId: string, elId: string, attrs: Record<string, unknown>) => {
-    setProject((prev) => {
-      if (!prev) return prev;
-      const next = {
-        ...prev,
-        screens: prev.screens.map((s) => (s.id === screenId ? { ...s, html: applyInteractionToHtml(s.html || "", elId, attrs) } : s)),
-      };
-      saveProject(next);
-      return next;
-    });
-  }, []);
+  const applyInteraction = useCallback(
+    (screenId: string, elId: string, attrs: Record<string, unknown>) => {
+      setProject((prev) => {
+        if (!prev) return prev;
+        const next = {
+          ...prev,
+          screens: prev.screens.map((s) =>
+            s.id === screenId
+              ? { ...s, html: applyInteractionToHtml(s.html || "", elId, attrs) }
+              : s,
+          ),
+        };
+        saveProject(next);
+        return next;
+      });
+    },
+    [],
+  );
 
   const clearInteraction = useCallback((screenId: string, elId: string) => {
     setProject((prev) => {
       if (!prev) return prev;
       const next = {
         ...prev,
-        screens: prev.screens.map((s) => (s.id === screenId ? { ...s, html: clearInteractionFromHtml(s.html || "", elId) } : s)),
+        screens: prev.screens.map((s) =>
+          s.id === screenId ? { ...s, html: clearInteractionFromHtml(s.html || "", elId) } : s,
+        ),
       };
       saveProject(next);
       return next;
@@ -802,7 +924,8 @@ function Workspace() {
   const selected = project?.screens.find((s) => s.id === selectedId) ?? null;
   const isBusy = status !== "idle";
   const isWebsiteProject = (project as any)?.format_config?.artifactType === "website";
-  const websiteFrameWidth = ((project as any)?.format_config?.frame?.width as number | undefined) ?? null;
+  const websiteFrameWidth =
+    ((project as any)?.format_config?.frame?.width as number | undefined) ?? null;
 
   // Keyboard shortcuts — active in Pro mode (the canvas editor). Ported from the
   // reference editor so the full shortcut set is restored, not just undo/redo.
@@ -810,7 +933,12 @@ function Workspace() {
     if (mode !== "pro") return;
     const isTyping = () => {
       const el = document.activeElement as HTMLElement | null;
-      return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.getAttribute("contenteditable") === "true");
+      return (
+        !!el &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.getAttribute("contenteditable") === "true")
+      );
     };
     const onKey = (e: KeyboardEvent) => {
       const s = useEditorStore.getState() as any;
@@ -831,48 +959,169 @@ function Workspace() {
 
       if (mod) {
         const k = e.key.toLowerCase();
-        if (k === "z") { e.preventDefault(); if (e.shiftKey) { s.redo(); } else { if (s.inBatch) s.endBatch(); s.undo(); } return; }
-        if (k === "s") { e.preventDefault(); if (project) saveProject(project); return; }
-        if (k === "y") { e.preventDefault(); s.redo(); return; }
-        if (k === "d") { e.preventDefault(); ops.duplicateSelected?.(); return; }
-        if (k === "c") { e.preventDefault(); ops.copySelected?.(); return; }
-        if (k === "x") { e.preventDefault(); ops.cut?.(); return; }
-        if (k === "v") { e.preventDefault(); ops.paste?.(); return; }
-        if (k === "a") { e.preventDefault(); ops.selectAll?.(); return; }
-        if (k === "k") { e.preventDefault(); if (s.selectedId) window.dispatchEvent(new CustomEvent("mae:focus-ai")); return; }
-        if (k === "g" && !e.shiftKey) { e.preventDefault(); ops.group?.(); return; }
-        if (k === "h" && e.shiftKey) { e.preventDefault(); s.selectedIds.forEach((id: string) => s.toggleHidden(id)); return; }
-        if (k === "l" && e.shiftKey) { e.preventDefault(); s.selectedIds.forEach((id: string) => s.toggleLock(id)); return; }
-        if (e.key === "=" || e.key === "+") { e.preventDefault(); ops.zoomIn?.(); return; }
-        if (e.key === "-" || e.key === "_") { e.preventDefault(); ops.zoomOut?.(); return; }
-        if (e.key === "]") { e.preventDefault(); e.shiftKey ? ops.bringToFront?.() : ops.bringForward?.(); return; }
-        if (e.key === "[") { e.preventDefault(); e.shiftKey ? ops.sendToBack?.() : ops.sendBackward?.(); return; }
+        if (k === "z") {
+          e.preventDefault();
+          if (e.shiftKey) {
+            s.redo();
+          } else {
+            if (s.inBatch) s.endBatch();
+            s.undo();
+          }
+          return;
+        }
+        if (k === "s") {
+          e.preventDefault();
+          if (project) saveProject(project);
+          return;
+        }
+        if (k === "y") {
+          e.preventDefault();
+          s.redo();
+          return;
+        }
+        if (k === "d") {
+          e.preventDefault();
+          ops.duplicateSelected?.();
+          return;
+        }
+        if (k === "c") {
+          e.preventDefault();
+          ops.copySelected?.();
+          return;
+        }
+        if (k === "x") {
+          e.preventDefault();
+          ops.cut?.();
+          return;
+        }
+        if (k === "v") {
+          e.preventDefault();
+          ops.paste?.();
+          return;
+        }
+        if (k === "a") {
+          e.preventDefault();
+          ops.selectAll?.();
+          return;
+        }
+        if (k === "k") {
+          e.preventDefault();
+          if (s.selectedId) window.dispatchEvent(new CustomEvent("mae:focus-ai"));
+          return;
+        }
+        if (k === "g" && !e.shiftKey) {
+          e.preventDefault();
+          ops.group?.();
+          return;
+        }
+        if (k === "h" && e.shiftKey) {
+          e.preventDefault();
+          s.selectedIds.forEach((id: string) => s.toggleHidden(id));
+          return;
+        }
+        if (k === "l" && e.shiftKey) {
+          e.preventDefault();
+          s.selectedIds.forEach((id: string) => s.toggleLock(id));
+          return;
+        }
+        if (e.key === "=" || e.key === "+") {
+          e.preventDefault();
+          ops.zoomIn?.();
+          return;
+        }
+        if (e.key === "-" || e.key === "_") {
+          e.preventDefault();
+          ops.zoomOut?.();
+          return;
+        }
+        if (e.key === "]") {
+          e.preventDefault();
+          e.shiftKey ? ops.bringToFront?.() : ops.bringForward?.();
+          return;
+        }
+        if (e.key === "[") {
+          e.preventDefault();
+          e.shiftKey ? ops.sendToBack?.() : ops.sendBackward?.();
+          return;
+        }
         return;
       }
 
-      if (e.shiftKey && e.key === "1") { e.preventDefault(); ops.fitToScreen?.(); return; }
-      if (e.shiftKey && e.key === "2") { e.preventDefault(); ops.zoomToSelection?.(); return; }
-      if (e.shiftKey && (e.key === "0" || e.key === ")")) { e.preventDefault(); ops.resetZoom?.(); return; }
-      if (e.key === "Tab") { e.preventDefault(); e.shiftKey ? ops.selectPrev?.() : ops.selectNext?.(); return; }
-      if ((e.key === "Delete" || e.key === "Backspace") && s.selectedIds.length) { e.preventDefault(); ops.deleteSelected?.(); return; }
-      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key) && s.selectedIds.length) {
+      if (e.shiftKey && e.key === "1") {
+        e.preventDefault();
+        ops.fitToScreen?.();
+        return;
+      }
+      if (e.shiftKey && e.key === "2") {
+        e.preventDefault();
+        ops.zoomToSelection?.();
+        return;
+      }
+      if (e.shiftKey && (e.key === "0" || e.key === ")")) {
+        e.preventDefault();
+        ops.resetZoom?.();
+        return;
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        e.shiftKey ? ops.selectPrev?.() : ops.selectNext?.();
+        return;
+      }
+      if ((e.key === "Delete" || e.key === "Backspace") && s.selectedIds.length) {
+        e.preventDefault();
+        ops.deleteSelected?.();
+        return;
+      }
+      if (
+        ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key) &&
+        s.selectedIds.length
+      ) {
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
-        const map: Record<string, [number, number]> = { ArrowUp: [0, -step], ArrowDown: [0, step], ArrowLeft: [-step, 0], ArrowRight: [step, 0] };
+        const map: Record<string, [number, number]> = {
+          ArrowUp: [0, -step],
+          ArrowDown: [0, step],
+          ArrowLeft: [-step, 0],
+          ArrowRight: [step, 0],
+        };
         const [dx, dy] = map[e.key];
         ops.nudge?.(dx, dy);
         return;
       }
-      if (e.key === "Enter" && s.selectedId) { e.preventDefault(); ops.startEditingSelected?.(); return; }
-      if (e.key === "F2" && s.selectedId) { e.preventDefault(); ops.startRename?.(); return; }
-      if (e.key === "Escape") { s.select(null); return; }
+      if (e.key === "Enter" && s.selectedId) {
+        e.preventDefault();
+        ops.startEditingSelected?.();
+        return;
+      }
+      if (e.key === "F2" && s.selectedId) {
+        e.preventDefault();
+        ops.startRename?.();
+        return;
+      }
+      if (e.key === "Escape") {
+        s.select(null);
+        return;
+      }
       if (!e.shiftKey && !e.altKey) {
-        const toolMap: Record<string, string> = { v: "select", h: "hand", t: "text", f: "frame", r: "rect", o: "ellipse", i: "image" };
+        const toolMap: Record<string, string> = {
+          v: "select",
+          h: "hand",
+          t: "text",
+          f: "frame",
+          r: "rect",
+          o: "ellipse",
+          i: "image",
+        };
         const t = toolMap[e.key.toLowerCase()];
-        if (t) { s.setTool(t); return; }
+        if (t) {
+          s.setTool(t);
+          return;
+        }
       }
     };
-    const onKeyUp = (e: KeyboardEvent) => { if (e.code === "Space") (useEditorStore.getState() as any).setSpaceDown(false); };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") (useEditorStore.getState() as any).setSpaceDown(false);
+    };
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKeyUp);
     return () => {
@@ -906,7 +1155,10 @@ function Workspace() {
         <div className="flex items-center gap-2">
           {/* Mode toggle */}
           <div className="flex items-center gap-1 rounded-full border border-border bg-panel/40 p-1">
-            {(isWebsiteProject ? (["lite", "pro"] as const) : (["lite", "pro", "connect"] as const)).map((m) => (
+            {(isWebsiteProject
+              ? (["lite", "pro"] as const)
+              : (["lite", "pro", "connect"] as const)
+            ).map((m) => (
               <button
                 key={m}
                 onClick={() => setMode(m)}
@@ -1000,17 +1252,21 @@ function Workspace() {
         <aside className="flex w-[320px] shrink-0 flex-col border-r border-border bg-surface">
           <div className="flex items-center justify-between px-4 pt-4">
             <div className="flex items-center gap-1 rounded-full bg-panel/70 p-1">
-              {(mode === "pro" ? (["chat", "theme"] as const) : (["chat", "theme"] as const)).map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setTab(t)}
-                  className={`rounded-full px-3.5 py-1.5 text-xs font-medium capitalize transition-colors ${
-                    tab === t ? "bg-brand text-white" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
+              {(mode === "pro" ? (["chat", "theme"] as const) : (["chat", "theme"] as const)).map(
+                (t) => (
+                  <button
+                    key={t}
+                    onClick={() => setTab(t)}
+                    className={`rounded-full px-3.5 py-1.5 text-xs font-medium capitalize transition-colors ${
+                      tab === t
+                        ? "bg-brand text-white"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ),
+              )}
             </div>
           </div>
 
@@ -1042,7 +1298,9 @@ function Workspace() {
 
           {mode === "pro" && project && (
             <div className="max-h-[40%] shrink-0 overflow-y-auto border-t border-border">
-              <Suspense fallback={<div className="p-3 text-xs text-muted-foreground">Loading layers…</div>}>
+              <Suspense
+                fallback={<div className="p-3 text-xs text-muted-foreground">Loading layers…</div>}
+              >
                 <LayersPanel embedded />
               </Suspense>
             </div>
@@ -1061,7 +1319,9 @@ function Workspace() {
             <ProCanvasHost project={project} isBusy={isBusy} />
           ) : mode === "connect" ? (
             project ? (
-              <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading flow…</div>}>
+              <Suspense
+                fallback={<div className="p-6 text-sm text-muted-foreground">Loading flow…</div>}
+              >
                 <FlowCanvas
                   screens={project.screens}
                   css={project.designSystemCss}
@@ -1074,19 +1334,29 @@ function Workspace() {
                   clearInteraction={clearInteraction}
                   initialPositions={(project as any).flow_positions}
                   onPositions={(pos: Record<string, { x: number; y: number }>) => {
-                    setProject((prev) => (prev ? ({ ...(prev as any), flow_positions: pos } as Project) : prev));
+                    setProject((prev) =>
+                      prev ? ({ ...(prev as any), flow_positions: pos } as Project) : prev,
+                    );
                   }}
-                  onOpenScreen={(id: string) => { setSelectedId(id); setMode("pro"); }}
+                  onOpenScreen={(id: string) => {
+                    setSelectedId(id);
+                    setMode("pro");
+                  }}
                 />
               </Suspense>
             ) : (
-              <div className="flex h-full items-center justify-center"><EmptyState isBusy={isBusy} /></div>
+              <div className="flex h-full items-center justify-center">
+                <EmptyState isBusy={isBusy} />
+              </div>
             )
           ) : (
             <LiteCanvas
               project={project}
               selectedId={selectedId}
-              onSelectScreen={(id) => { setSelectedId(id); setLiteSel(null); }}
+              onSelectScreen={(id) => {
+                setSelectedId(id);
+                setLiteSel(null);
+              }}
               selElId={liteSel}
               onSelectElement={onLiteSelectElement}
               isBusy={isBusy}
@@ -1097,13 +1367,23 @@ function Workspace() {
         {/* Right panel — Properties (Pro) or Prototype (Connect) */}
         {mode === "pro" && project && (
           <aside className="flex w-[300px] shrink-0 flex-col overflow-y-auto border-l border-border bg-surface">
-            <Suspense fallback={<div className="p-3 text-xs text-muted-foreground">Loading properties…</div>}>
+            <Suspense
+              fallback={
+                <div className="p-3 text-xs text-muted-foreground">Loading properties…</div>
+              }
+            >
               <PropertiesPanel />
             </Suspense>
           </aside>
         )}
         {mode === "connect" && project && (
-          <Suspense fallback={<div className="w-[320px] shrink-0 p-3 text-xs text-muted-foreground">Loading prototype…</div>}>
+          <Suspense
+            fallback={
+              <div className="w-[320px] shrink-0 p-3 text-xs text-muted-foreground">
+                Loading prototype…
+              </div>
+            }
+          >
             <PrototypePanel
               screens={project.screens}
               currentScreenId={connectScreenId}
@@ -1120,7 +1400,11 @@ function Workspace() {
       </div>
 
       {previewOpen && project && (
-        <PreviewModal project={project} onClose={() => setPreviewOpen(false)} initialId={selectedId} />
+        <PreviewModal
+          project={project}
+          onClose={() => setPreviewOpen(false)}
+          initialId={selectedId}
+        />
       )}
     </div>
   );
@@ -1187,7 +1471,14 @@ function LiteCanvas({
                 onClick={() => onSelectScreen(s.id)}
                 onSelectElement={onSelectElement}
                 isWebsite={(project as any)?.format_config?.artifactType === "website"}
-                frameWidth={((project as any)?.format_config?.frame?.width as number | undefined) ?? null}
+                frameWidth={
+                  ((project as any)?.format_config?.frame?.width as number | undefined) ?? null
+                }
+                frameHeight={
+                  (project as any)?.format_config?.artifactType === "figma"
+                    ? (((project as any)?.format_config?.frame?.height as number | undefined) ?? null)
+                    : null
+                }
               />
             ))}
           </div>
@@ -1203,7 +1494,9 @@ function ProCanvasHost({ project, isBusy }: { project: Project | null; isBusy: b
   return (
     <div className="relative h-full w-full">
       {project ? (
-        <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading editor…</div>}>
+        <Suspense
+          fallback={<div className="p-6 text-sm text-muted-foreground">Loading editor…</div>}
+        >
           <Canvas />
         </Suspense>
       ) : (
@@ -1228,6 +1521,7 @@ function LitePhoneScreen({
   onSelectElement,
   isWebsite = false,
   frameWidth = null,
+  frameHeight = null,
 }: {
   screenId?: string;
   platform: "ios" | "android";
@@ -1241,6 +1535,7 @@ function LitePhoneScreen({
   onSelectElement?: (screenId: string, elId: string | null) => void;
   isWebsite?: boolean;
   frameWidth?: number | null;
+  frameHeight?: number | null;
 }) {
   // Element selection: click content to target a specific element (for focused
   // AI edits), click empty screen area to select the whole screen. Uses
@@ -1249,7 +1544,10 @@ function LitePhoneScreen({
     ? (e: ReactMouseEvent<HTMLDivElement>) => {
         const el = document
           .elementsFromPoint(e.clientX, e.clientY)
-          .find((x) => x.hasAttribute("data-mae-id") && !(x as HTMLElement).classList.contains("screen"));
+          .find(
+            (x) =>
+              x.hasAttribute("data-mae-id") && !(x as HTMLElement).classList.contains("screen"),
+          );
         e.preventDefault();
         e.stopPropagation();
         if (el && screenId) onSelectElement(screenId, el.getAttribute("data-mae-id"));
@@ -1272,10 +1570,11 @@ function LitePhoneScreen({
         css={css}
         isWebsite={isWebsite}
         frameWidth={frameWidth}
+        frameHeight={frameHeight}
         onSelect={onClick}
         onClickCapture={onClickCapture}
         wrapperData={{ "data-phone-frame-button": "" }}
-        wrapperClassName={`group relative cursor-default ${isWebsite ? "rounded-xl" : "rounded-[48px]"} transition-all ${
+        wrapperClassName={`group relative cursor-default ${isWebsite || frameHeight != null ? "rounded-xl" : "rounded-[48px]"} transition-all ${
           selected
             ? "shadow-[0_0_0_2px_var(--brand),0_30px_60px_-15px_rgba(99,102,241,0.4)]"
             : "shadow-2xl hover:shadow-[0_30px_60px_-15px_rgba(0,0,0,0.6)]"
@@ -1317,8 +1616,19 @@ function EmptyState({ isBusy }: { isBusy: boolean }) {
 }
 
 function ChatPanel({
-  project, chat, isBusy, status, input, setInput, refine, screens, selectedId, onSelectScreen,
-  onAddScreen, focusLabel, onClearFocus,
+  project,
+  chat,
+  isBusy,
+  status,
+  input,
+  setInput,
+  refine,
+  screens,
+  selectedId,
+  onSelectScreen,
+  onAddScreen,
+  focusLabel,
+  onClearFocus,
 }: {
   project: Project | null;
   chat: ChatMsg[];
@@ -1346,16 +1656,28 @@ function ChatPanel({
               <Sparkles className="h-4 w-4 text-brand" />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Project brief</div>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                Project brief
+              </div>
               <div className="truncate text-sm font-semibold">{project.name}</div>
             </div>
           </div>
         )}
         {chat.map((m, i) =>
           m.role === "user" ? (
-            <div key={i} className="ml-auto max-w-[85%] rounded-2xl bg-panel px-4 py-2 text-sm text-foreground/90">{m.text}</div>
+            <div
+              key={i}
+              className="ml-auto max-w-[85%] rounded-2xl bg-panel px-4 py-2 text-sm text-foreground/90"
+            >
+              {m.text}
+            </div>
           ) : (
-            <div key={i} className="mr-auto max-w-[92%] rounded-2xl border border-border/60 bg-panel/40 px-4 py-2.5 text-sm text-foreground/90">{m.text}</div>
+            <div
+              key={i}
+              className="mr-auto max-w-[92%] rounded-2xl border border-border/60 bg-panel/40 px-4 py-2.5 text-sm text-foreground/90"
+            >
+              {m.text}
+            </div>
           ),
         )}
         {isBusy && (
@@ -1367,7 +1689,9 @@ function ChatPanel({
         {screens.length > 0 && (
           <div className="pt-2">
             <div className="mb-2 flex items-center justify-between">
-              <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Screens</div>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                Screens
+              </div>
               <button
                 onClick={() => setShowAddScreen((v) => !v)}
                 disabled={isBusy}
@@ -1406,7 +1730,13 @@ function ChatPanel({
                   className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand py-1.5 text-xs font-semibold text-white disabled:opacity-40"
                   data-testid="confirm-add-screen"
                 >
-                  {isBusy ? <><Loader2 className="h-3 w-3 animate-spin" /> Generating...</> : <>Generate screen</>}
+                  {isBusy ? (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin" /> Generating...
+                    </>
+                  ) : (
+                    <>Generate screen</>
+                  )}
                 </button>
               </div>
             )}
@@ -1416,10 +1746,14 @@ function ChatPanel({
                   key={s.id}
                   onClick={() => onSelectScreen(s.id)}
                   className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors ${
-                    selectedId === s.id ? "bg-brand/15 text-foreground" : "text-muted-foreground hover:bg-panel"
+                    selectedId === s.id
+                      ? "bg-brand/15 text-foreground"
+                      : "text-muted-foreground hover:bg-panel"
                   }`}
                 >
-                  <span className="w-5 font-mono text-[10px] text-brand">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="w-5 font-mono text-[10px] text-brand">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
                   <span className="flex-1 truncate">{s.name}</span>
                 </button>
               ))}
@@ -1430,10 +1764,19 @@ function ChatPanel({
 
       <div className="p-4">
         {focusLabel && (
-          <div className="mb-2 flex items-center gap-2 rounded-lg border border-brand/40 bg-brand/10 px-2.5 py-1.5 text-xs" data-testid="lite-focus-chip">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-brand">Editing</span>
+          <div
+            className="mb-2 flex items-center gap-2 rounded-lg border border-brand/40 bg-brand/10 px-2.5 py-1.5 text-xs"
+            data-testid="lite-focus-chip"
+          >
+            <span className="text-[10px] font-bold uppercase tracking-widest text-brand">
+              Editing
+            </span>
             <span className="flex-1 truncate text-foreground/90">{focusLabel}</span>
-            <button onClick={onClearFocus} className="text-muted-foreground hover:text-foreground" aria-label="Clear element focus">
+            <button
+              onClick={onClearFocus}
+              className="text-muted-foreground hover:text-foreground"
+              aria-label="Clear element focus"
+            >
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
@@ -1449,11 +1792,20 @@ function ChatPanel({
               }
             }}
             disabled={!project || isBusy}
-            placeholder={project ? (focusLabel ? `Change the ${focusLabel}…` : "Change the selected screen…") : "What do you want to design?"}
+            placeholder={
+              project
+                ? focusLabel
+                  ? `Change the ${focusLabel}…`
+                  : "Change the selected screen…"
+                : "What do you want to design?"
+            }
             className="min-h-[64px] w-full resize-none bg-transparent text-sm text-foreground placeholder:text-muted-foreground/80 focus:outline-none disabled:opacity-50"
           />
           <div className="mt-1 flex items-center justify-between">
-            <button className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:text-foreground" aria-label="Attach">
+            <button
+              className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:text-foreground"
+              aria-label="Attach"
+            >
               <ImageIcon className="h-4 w-4" />
             </button>
             <button
@@ -1484,11 +1836,17 @@ function ThemePanel({
   onApplyDesignSystem: (payload: { instruction?: string; sourceUrl?: string }) => Promise<void>;
   isBusy: boolean;
 }) {
-  const [editSwatch, setEditSwatch] = useState<{ key: string; color: string; anchor: HTMLElement } | null>(null);
+  const [editSwatch, setEditSwatch] = useState<{
+    key: string;
+    color: string;
+    anchor: HTMLElement;
+  } | null>(null);
   const [instruction, setInstruction] = useState("");
   const [styleUrl, setStyleUrl] = useState("");
   const swatchRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const designSystem = project?.designSystem?.palette ? project.designSystem : FALLBACK_DESIGN_SYSTEM;
+  const designSystem = project?.designSystem?.palette
+    ? project.designSystem
+    : FALLBACK_DESIGN_SYSTEM;
   const isWebsite = project && (project as any)?.format_config?.artifactType === "website";
 
   if (isWebsite) {
@@ -1501,7 +1859,8 @@ function ThemePanel({
             <Sparkles className="h-3 w-3" /> System Design
           </div>
           <div className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
-            Restyle this website with AI-generated original CSS. Reference URLs are interpreted for mood and brand direction only; CSS is not cloned.
+            Restyle this website with AI-generated original CSS. Reference URLs are interpreted for
+            mood and brand direction only; CSS is not cloned.
           </div>
           <div className="space-y-2">
             <textarea
@@ -1522,7 +1881,11 @@ function ThemePanel({
               className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand py-2 text-xs font-semibold text-white disabled:opacity-40"
               data-testid="ds-ai-prompt-btn"
             >
-              {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
+              {isBusy ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Wand2 className="h-3 w-3" />
+              )}
               Regenerate website theme
             </button>
           </div>
@@ -1544,26 +1907,48 @@ function ThemePanel({
               className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-panel py-2 text-xs font-semibold hover:bg-panel/80 disabled:opacity-40"
               data-testid="ds-ai-url-btn"
             >
-              {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Globe className="h-3 w-3" />}
+              {isBusy ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Globe className="h-3 w-3" />
+              )}
               Use as AI style reference
             </button>
           </div>
         </div>
-        <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Website import</div>
+        <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+          Website import
+        </div>
         <div className="rounded-xl border border-border bg-panel/40 p-3">
           <div className="truncate text-sm font-semibold">{project.name}</div>
-          {src && <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{src}</div>}
+          {src && (
+            <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{src}</div>
+          )}
           <div className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-            Captured at {w}px desktop width. AI theme updates replace the captured CSS while preserving page HTML and data-mae-id edit targets.
+            Captured at {w}px desktop width. AI theme updates replace the captured CSS while
+            preserving page HTML and data-mae-id edit targets.
           </div>
         </div>
-        <div className="mb-3 mt-6 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Theme Snapshot</div>
+        <div className="mb-3 mt-6 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+          Theme Snapshot
+        </div>
         <div className="rounded-xl border border-border bg-panel/40 p-3 text-xs text-muted-foreground">
-          <div className="flex justify-between gap-2"><span>Font</span><span className="truncate text-foreground">{designSystem.font}</span></div>
-          <div className="mt-1 flex justify-between gap-2"><span>Radius</span><span className="text-foreground">{designSystem.radius}</span></div>
+          <div className="flex justify-between gap-2">
+            <span>Font</span>
+            <span className="truncate text-foreground">{designSystem.font}</span>
+          </div>
+          <div className="mt-1 flex justify-between gap-2">
+            <span>Radius</span>
+            <span className="text-foreground">{designSystem.radius}</span>
+          </div>
           <div className="mt-3 grid grid-cols-6 gap-1">
             {Object.entries(designSystem.palette).map(([k, v]) => (
-              <div key={k} className="h-6 rounded border border-white/10" style={{ background: v }} title={`${k}: ${v}`} />
+              <div
+                key={k}
+                className="h-6 rounded border border-white/10"
+                style={{ background: v }}
+                title={`${k}: ${v}`}
+              />
             ))}
           </div>
         </div>
@@ -1598,7 +1983,11 @@ function ThemePanel({
                 className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand py-2 text-xs font-semibold text-white disabled:opacity-40"
                 data-testid="ds-ai-prompt-btn"
               >
-                {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
+                {isBusy ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Wand2 className="h-3 w-3" />
+                )}
                 Regenerate with AI
               </button>
             </div>
@@ -1620,26 +2009,41 @@ function ThemePanel({
                 className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-panel py-2 text-xs font-semibold hover:bg-panel/80 disabled:opacity-40"
                 data-testid="ds-ai-url-btn"
               >
-                {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Globe className="h-3 w-3" />}
+                {isBusy ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Globe className="h-3 w-3" />
+                )}
                 Use as AI style reference
               </button>
             </div>
           </div>
 
-          <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Palette</div>
-          <p className="mb-3 text-[10px] text-muted-foreground/60">Click any swatch to edit. Changes update all screens instantly.</p>
+          <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+            Palette
+          </div>
+          <p className="mb-3 text-[10px] text-muted-foreground/60">
+            Click any swatch to edit. Changes update all screens instantly.
+          </p>
           <div className="grid grid-cols-3 gap-2">
             {Object.entries(designSystem.palette).map(([k, v]) => (
               <div key={k} className="rounded-xl border border-border p-2">
                 <button
-                  ref={(el) => { swatchRefs.current[k] = el; }}
+                  ref={(el) => {
+                    swatchRefs.current[k] = el;
+                  }}
                   className={`h-10 w-full rounded-md transition-all hover:scale-[1.04] focus:outline-none ${
-                    editSwatch?.key === k ? "ring-2 ring-brand ring-offset-1 ring-offset-surface" : "hover:ring-1 hover:ring-white/30"
+                    editSwatch?.key === k
+                      ? "ring-2 ring-brand ring-offset-1 ring-offset-surface"
+                      : "hover:ring-1 hover:ring-white/30"
                   }`}
                   style={{ background: v }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (editSwatch?.key === k) { setEditSwatch(null); return; }
+                    if (editSwatch?.key === k) {
+                      setEditSwatch(null);
+                      return;
+                    }
                     setEditSwatch({ key: k, color: v, anchor: e.currentTarget });
                   }}
                   title={`Edit ${k}`}
@@ -1655,7 +2059,7 @@ function ThemePanel({
             <ColorPickerComponent
               value={editSwatch.color}
               onChange={(hex: string) => {
-                setEditSwatch((prev) => prev ? { ...prev, color: hex } : null);
+                setEditSwatch((prev) => (prev ? { ...prev, color: hex } : null));
                 onPaletteChange?.(editSwatch.key, hex);
               }}
               onOpacityChange={() => {}}
@@ -1664,22 +2068,30 @@ function ThemePanel({
             />
           )}
 
-          <div className="mb-3 mt-6 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Platform</div>
+          <div className="mb-3 mt-6 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+            Platform
+          </div>
           <div className="flex items-center gap-1 rounded-full bg-panel/70 p-1">
             {(["ios", "android"] as const).map((p) => (
               <button
                 key={p}
                 onClick={() => setPlatform(p)}
                 className={`flex-1 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                  (project.platform ?? "ios") === p ? "bg-brand text-white" : "text-muted-foreground"
+                  (project.platform ?? "ios") === p
+                    ? "bg-brand text-white"
+                    : "text-muted-foreground"
                 }`}
               >
                 {p === "ios" ? "iOS" : "Android"}
               </button>
             ))}
           </div>
-          <div className="mb-3 mt-6 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Typography</div>
-          <div className="rounded-xl border border-border bg-panel/40 p-3 text-sm">{designSystem.font}</div>
+          <div className="mb-3 mt-6 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+            Typography
+          </div>
+          <div className="rounded-xl border border-border bg-panel/40 p-3 text-sm">
+            {designSystem.font}
+          </div>
         </>
       ) : (
         <div className="rounded-xl border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
@@ -1707,9 +2119,14 @@ function ProfileDropdown({ onClose }: { onClose: () => void }) {
     { icon: HelpCircle, label: "Help & Support" },
   ];
   return (
-    <div data-profile-dropdown className="absolute right-0 top-11 z-50 w-64 overflow-hidden rounded-2xl border border-border bg-panel/95 shadow-2xl backdrop-blur">
+    <div
+      data-profile-dropdown
+      className="absolute right-0 top-11 z-50 w-64 overflow-hidden rounded-2xl border border-border bg-panel/95 shadow-2xl backdrop-blur"
+    >
       <div className="flex items-center gap-3 border-b border-border p-4">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-brand text-sm font-bold text-white">T</div>
+        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-brand text-sm font-bold text-white">
+          T
+        </div>
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold">Guest Designer</div>
           <div className="truncate text-xs text-muted-foreground">Sign in to save projects</div>
@@ -1719,7 +2136,10 @@ function ProfileDropdown({ onClose }: { onClose: () => void }) {
         {items.map((it) => (
           <button
             key={it.label}
-            onClick={() => { toast.message(it.label, { description: "Coming soon" }); onClose(); }}
+            onClick={() => {
+              toast.message(it.label, { description: "Coming soon" });
+              onClose();
+            }}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-surface"
           >
             <it.icon className="h-4 w-4 text-muted-foreground" />
@@ -1730,7 +2150,10 @@ function ProfileDropdown({ onClose }: { onClose: () => void }) {
       </div>
       <div className="border-t border-border p-1">
         <button
-          onClick={() => { toast.message("Sign in", { description: "Auth coming soon" }); onClose(); }}
+          onClick={() => {
+            toast.message("Sign in", { description: "Auth coming soon" });
+            onClose();
+          }}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-brand hover:bg-brand/10"
         >
           <LogOut className="h-4 w-4" />
@@ -1741,14 +2164,28 @@ function ProfileDropdown({ onClose }: { onClose: () => void }) {
   );
 }
 
-function PreviewModal({ project, onClose, initialId }: { project: Project; onClose: () => void; initialId: string | null }) {
+function PreviewModal({
+  project,
+  onClose,
+  initialId,
+}: {
+  project: Project;
+  onClose: () => void;
+  initialId: string | null;
+}) {
   const isWebsite = (project as any)?.format_config?.artifactType === "website";
+  const isFigma = (project as any)?.format_config?.artifactType === "figma";
   const frameW = ((project as any)?.format_config?.frame?.width as number | undefined) ?? null;
+  const frameH = isFigma
+    ? (((project as any)?.format_config?.frame?.height as number | undefined) ?? null)
+    : null;
   const flowStart = (project as any).flowStart as string | undefined;
   const [id, setId] = useState<string>(flowStart ?? initialId ?? project.screens[0]?.id ?? "");
   const screen = project.screens.find((s) => s.id === id) ?? project.screens[0];
   useEffect(() => {
-    function onKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
@@ -1767,7 +2204,11 @@ function PreviewModal({ project, onClose, initialId }: { project: Project; onClo
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-      <button onClick={onClose} className="absolute right-5 top-5 flex h-9 w-9 items-center justify-center rounded-full border border-border bg-panel/80 text-muted-foreground transition-colors hover:text-foreground" aria-label="Close preview">
+      <button
+        onClick={onClose}
+        className="absolute right-5 top-5 flex h-9 w-9 items-center justify-center rounded-full border border-border bg-panel/80 text-muted-foreground transition-colors hover:text-foreground"
+        aria-label="Close preview"
+      >
         <X className="h-4 w-4" />
       </button>
       <div className="absolute left-5 top-5 flex items-center gap-2 text-sm">
@@ -1781,10 +2222,14 @@ function PreviewModal({ project, onClose, initialId }: { project: Project; onClo
               key={s.id}
               onClick={() => setId(s.id)}
               className={`flex items-center gap-3 rounded-lg px-3 py-2 text-left text-xs transition-colors ${
-                s.id === id ? "bg-brand/20 text-foreground" : "text-muted-foreground hover:bg-surface"
+                s.id === id
+                  ? "bg-brand/20 text-foreground"
+                  : "text-muted-foreground hover:bg-surface"
               }`}
             >
-              <span className="w-5 font-mono text-[10px] text-brand">{String(i + 1).padStart(2, "0")}</span>
+              <span className="w-5 font-mono text-[10px] text-brand">
+                {String(i + 1).padStart(2, "0")}
+              </span>
               <span className="flex-1 truncate">{s.name}</span>
             </button>
           ))}
@@ -1793,7 +2238,11 @@ function PreviewModal({ project, onClose, initialId }: { project: Project; onClo
           <div
             onClickCapture={onNavClick}
             data-testid="preview-stage"
-            style={isWebsite ? { maxHeight: "84vh", maxWidth: "72vw", overflow: "auto", borderRadius: 12 } : undefined}
+            style={
+              isWebsite || isFigma
+                ? { maxHeight: "84vh", maxWidth: "72vw", overflow: "auto", borderRadius: 12 }
+                : undefined
+            }
           >
             <LitePhoneScreen
               platform={project.platform}
@@ -1805,6 +2254,7 @@ function PreviewModal({ project, onClose, initialId }: { project: Project; onClo
               onClick={() => {}}
               isWebsite={isWebsite}
               frameWidth={frameW}
+              frameHeight={frameH}
             />
           </div>
         )}
@@ -1817,60 +2267,23 @@ function PreviewModal({ project, onClose, initialId }: { project: Project; onClo
 // Exports — all derived from HTML
 // ---------------------------------------------------------------------------
 
-// Escape a string so it can live inside a `template literal` while KEEPING its
-// newlines/indentation (unlike JSON.stringify, which flattens to one line).
-function forTemplate(s: string): string {
-  return s.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
-}
-
-async function tsxWrap(project: Project): Promise<string> {
-  const header = [
-    `// ${project.name}`,
-    `// Generated by sleek.design`,
-    `// ${project.idea}`,
-    "",
-    "// Shared design-system CSS for every screen below.",
-  ].join("\n");
-
-  const cssPretty = await prettyCss(project.designSystemCss);
-  const cssConst = `const DESIGN_SYSTEM_CSS = \`\n${forTemplate(cssPretty.trimEnd())}\n\`;`;
-
-  const screens = await Promise.all(
-    project.screens.map(async (s) => {
-      const compName = (s.name.replace(/[^A-Za-z0-9]/g, "") || "Screen") + "Screen";
-      const htmlConst = compName.replace(/([a-z])([A-Z])/g, "$1_$2").toUpperCase() + "_HTML";
-      const htmlPretty = await prettyHtml(s.html);
-      return [
-        `// ── ${s.name} ${"─".repeat(Math.max(0, 40 - s.name.length))}`,
-        `const ${htmlConst} = \`\n${forTemplate(htmlPretty.trimEnd())}\n\`;`,
-        "",
-        `export function ${compName}() {`,
-        `  return (`,
-        `    <div className="mobile-screen">`,
-        `      <style>{DESIGN_SYSTEM_CSS}</style>`,
-        `      <div dangerouslySetInnerHTML={{ __html: ${htmlConst} }} />`,
-        `    </div>`,
-        `  );`,
-        `}`,
-      ].join("\n");
-    }),
-  );
-
-  // The CSS/HTML template literals are already Prettier-formatted; we hand-indent
-  // the small JSX wrapper, so no second full-file pass is needed (and it keeps
-  // huge pages fast). Everything is separated by blank lines for readability.
-  return [header, "", cssConst, "", screens.join("\n\n"), ""].join("\n");
-}
-
 function figmaJson(project: Project) {
-  const frame = (project as any)?.format_config?.frame as { width?: number; height?: number } | undefined;
+  const frame = (project as any)?.format_config?.frame as
+    { width?: number; height?: number } | undefined;
   const width = frame?.width ?? 375;
   const height = frame?.height ?? 812;
   return {
     name: project.name,
     designSystem: project.designSystem,
     designSystemCss: project.designSystemCss,
-    frames: project.screens.map((s) => ({ name: s.name, id: s.id, width, height, role: s.role, html: s.html })),
+    frames: project.screens.map((s) => ({
+      name: s.name,
+      id: s.id,
+      width,
+      height,
+      role: s.role,
+      html: s.html,
+    })),
     note: "Import via a Figma HTML-to-Figma plugin (e.g. html.to.design) for full fidelity.",
   };
 }
@@ -1879,14 +2292,18 @@ function downloadFile(name: string, content: string, mime: string) {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = name; a.click();
+  a.href = url;
+  a.download = name;
+  a.click();
   URL.revokeObjectURL(url);
 }
 
 function downloadBlob(name: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = name; a.click();
+  a.href = url;
+  a.download = name;
+  a.click();
   URL.revokeObjectURL(url);
 }
 
@@ -1901,7 +2318,9 @@ function ExportDropdown({ project, onClose }: { project: Project | null; onClose
   async function downloadWebsiteZip() {
     if (!sourceUrl || zipState !== "idle") return;
     setZipState("preparing");
-    toast.message("Preparing interactive ZIP…", { description: "Re-cloning the live site. This takes a minute." });
+    toast.message("Preparing interactive ZIP…", {
+      description: "Re-cloning the live site. This takes a minute.",
+    });
     try {
       const res = await fetch("/api/clone/start", {
         method: "POST",
@@ -1932,8 +2351,12 @@ function ExportDropdown({ project, onClose }: { project: Project | null; onClose
 
   return (
     <div className="absolute right-24 top-[52px] z-50 w-[420px] overflow-hidden rounded-2xl border border-border bg-panel/95 p-5 shadow-2xl backdrop-blur">
-      <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Build with AI</div>
-      <p className="mt-1 text-xs text-muted-foreground">Copy an AI prompt for your coding tool of choice.</p>
+      <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+        Build with AI
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Copy an AI prompt for your coding tool of choice.
+      </p>
       <div className="mt-3 space-y-2">
         <button
           disabled={disabled}
@@ -1946,15 +2369,26 @@ function ExportDropdown({ project, onClose }: { project: Project | null; onClose
           }}
           className="flex w-full items-center gap-3 rounded-xl border border-brand/40 bg-gradient-to-b from-brand/5 to-transparent p-3 text-left transition-colors hover:border-brand/70 disabled:opacity-40"
         >
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-panel"><Code2 className="h-4 w-4" /></div>
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-panel">
+            <Code2 className="h-4 w-4" />
+          </div>
           <div className="flex-1">
             <div className="text-sm font-semibold">Copy AI Prompt</div>
-            <div className="text-xs text-muted-foreground">Paste into Claude Code, Codex, Cursor to implement designs</div>
+            <div className="text-xs text-muted-foreground">
+              Paste into Claude Code, Codex, Cursor to implement designs
+            </div>
           </div>
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-panel"><Copy className="h-3.5 w-3.5" /></div>
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-panel">
+            <Copy className="h-3.5 w-3.5" />
+          </div>
         </button>
-        <button disabled className="flex w-full items-center gap-3 rounded-xl border border-border bg-surface/60 p-3 text-left opacity-70">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-panel"><Plug className="h-4 w-4" /></div>
+        <button
+          disabled
+          className="flex w-full items-center gap-3 rounded-xl border border-border bg-surface/60 p-3 text-left opacity-70"
+        >
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-panel">
+            <Plug className="h-4 w-4" />
+          </div>
           <div className="flex-1">
             <div className="text-sm font-semibold">Use Agent Skill</div>
             <div className="text-xs text-muted-foreground">Coming soon</div>
@@ -1964,7 +2398,9 @@ function ExportDropdown({ project, onClose }: { project: Project | null; onClose
       </div>
 
       <div className="my-5 h-px bg-border" />
-      <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Manual Export</div>
+      <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+        Manual Export
+      </div>
       <div className="mt-2 space-y-1">
         {isWebsite && (
           <button
@@ -1984,6 +2420,7 @@ function ExportDropdown({ project, onClose }: { project: Project | null; onClose
         )}
         {[
           { icon: Code2, label: "Export React (TSX)", action: "code" },
+          { icon: Code2, label: "Export React Project", action: "react-project" },
           { icon: Code2, label: "Export Vue Project", action: "vue" },
           { icon: Code2, label: "Export Angular Project", action: "angular" },
           { icon: Download, label: "Export raw HTML", action: "html" },
@@ -1995,11 +2432,22 @@ function ExportDropdown({ project, onClose }: { project: Project | null; onClose
             disabled={disabled}
             onClick={async () => {
               if (!project) return;
-              const name = project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "project";
+              const name =
+                project.name
+                  .toLowerCase()
+                  .replace(/[^a-z0-9]+/g, "-")
+                  .replace(/^-|-$/g, "") || "project";
               if (item.action === "code") {
                 const t = toast.loading("Formatting React TSX…");
-                downloadFile(`${name}.tsx`, await tsxWrap(project), "text/plain");
+                // IR-based export: real JSX per screen (replaces the old
+                // dangerouslySetInnerHTML wrapper), re-importable multi-screen.
+                downloadFile(`${name}.tsx`, await buildReactTsx(project), "text/plain");
                 toast.success("React TSX downloaded", { id: t });
+              } else if (item.action === "react-project") {
+                const t = toast.loading("Packaging React project…");
+                const zip = await createProjectZip(await buildReactProjectExport(project));
+                downloadBlob(`${name}-react.zip`, zip);
+                toast.success("React project downloaded", { id: t });
               } else if (item.action === "vue") {
                 const t = toast.loading("Packaging Vue project…");
                 const zip = await createProjectZip(await buildVueProjectExport(project));
@@ -2012,13 +2460,45 @@ function ExportDropdown({ project, onClose }: { project: Project | null; onClose
                 toast.success("Angular project downloaded", { id: t });
               } else if (item.action === "html") {
                 const t = toast.loading("Formatting HTML…");
-                const rawDoc = `<!doctype html><html><head><meta charset="utf-8"><title>${project.name}</title><style>${project.designSystemCss}</style></head><body>\n${project.screens.map((s) => `<!-- ${s.name} -->\n${s.html}`).join("\n<hr/>\n")}\n</body></html>`;
+                // IR-based export: standalone doc, fully re-importable with all
+                // screens, names and design CSS intact.
+                const rawDoc = await buildHtmlExport(project);
                 // Prettier formats the document AND the embedded <style> CSS.
                 downloadFile(`${name}.html`, await prettyHtml(rawDoc), "text/html");
                 toast.success("HTML downloaded", { id: t });
               } else if (item.action === "figma") {
-                downloadFile(`${name}.figma.json`, JSON.stringify(figmaJson(project), null, 2), "application/json");
-                toast.success("Figma-ready JSON downloaded");
+                const t = toast.loading("Building Figma nodes (measuring via clone engine)…");
+                try {
+                  // IR-based export: real sleek.figma-nodes document with
+                  // resolved geometry + computed styles, consumable by the
+                  // bundled sleek.design Figma plugin (or any html.to.design
+                  // workflow). Requires the resolve pass (clone engine).
+                  const doc = await buildFigmaExport(project);
+                  downloadFile(
+                    `${name}.figma.json`,
+                    JSON.stringify(doc, null, 2),
+                    "application/json",
+                  );
+                  const warnCount = doc.warnings.length;
+                  toast.success(
+                    `Figma nodes downloaded${warnCount ? ` (${warnCount} warning${warnCount === 1 ? "" : "s"})` : ""}`,
+                    { id: t },
+                  );
+                } catch (err) {
+                  // Resolve engine unreachable — fall back to the legacy
+                  // HTML-payload dump so the user always leaves with a usable
+                  // artifact, and tell them why fidelity is reduced.
+                  const message = err instanceof Error ? err.message : String(err);
+                  downloadFile(
+                    `${name}.figma.json`,
+                    JSON.stringify(figmaJson(project), null, 2),
+                    "application/json",
+                  );
+                  toast.error(
+                    "Fallback: clone engine offline — downloaded HTML payload instead of resolved nodes.",
+                    { id: t, description: message },
+                  );
+                }
               } else if (item.action === "json") {
                 downloadFile(`${name}.json`, JSON.stringify(project, null, 2), "application/json");
                 toast.success("Project JSON downloaded");

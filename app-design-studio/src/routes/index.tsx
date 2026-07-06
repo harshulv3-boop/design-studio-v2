@@ -50,6 +50,26 @@ function ProjectThumbnail({ summary }: { summary: ProjectSummary }) {
       </div>
     );
   }
+  // Figma imports: free-form designs at arbitrary dimensions, often with many
+  // image fills — rendering live on every card is heavy. Show a lightweight
+  // "design" card with the frame dimensions instead (like the website card).
+  if (summary.format_config?.artifactType === "figma") {
+    const f = summary.format_config?.frame;
+    const dims = f ? `${Math.round(f.width)}×${Math.round(f.height ?? 0)}` : "Design";
+    return (
+      <div
+        className="pointer-events-none flex flex-col items-center justify-center gap-2 overflow-hidden rounded-xl border border-border/70 bg-gradient-to-b from-panel to-surface"
+        style={{ width: W, height: Math.round(W * 1.3) }}
+        aria-hidden
+      >
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand/15">
+          <Layers className="h-6 w-6 text-brand" />
+        </div>
+        <div className="max-w-[85%] truncate text-center text-[11px] font-semibold text-foreground">{summary.name}</div>
+        <div className="rounded-full border border-border bg-surface/70 px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider text-muted-foreground">{dims}</div>
+      </div>
+    );
+  }
   const scale = W / 375;
   return (
     <div
@@ -111,7 +131,13 @@ function SavedProjects({ onOpen }: { onOpen: (id: string) => void }) {
               <div className="flex items-center justify-between gap-2">
                 <div className="truncate text-sm font-semibold text-foreground">{p.name}</div>
                 <span className="shrink-0 rounded-full border border-border bg-surface/70 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
-                  {p.format_config?.artifactType === "website" ? "Web" : p.platform === "ios" ? "iOS" : "Android"}
+                  {p.format_config?.artifactType === "website"
+                    ? "Web"
+                    : p.format_config?.artifactType === "figma"
+                      ? "Design"
+                      : p.platform === "ios"
+                        ? "iOS"
+                        : "Android"}
                 </span>
               </div>
               <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground">

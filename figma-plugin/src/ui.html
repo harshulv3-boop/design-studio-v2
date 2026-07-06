@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>sleek.design import</title>
+    <style>
+      :root {
+        --bg: #f7f8fa;
+        --panel: #ffffff;
+        --border: #e6e8ec;
+        --text: #1a1d24;
+        --muted: #6b7280;
+        --accent: #6d5ef2;
+        --danger: #dc2626;
+        --ok: #16a34a;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 16px;
+        background: var(--bg);
+        color: var(--text);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      h1 {
+        font-size: 15px;
+        font-weight: 700;
+        margin: 0 0 4px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      h1 .dot {
+        width: 8px; height: 8px; border-radius: 999px;
+        background: var(--accent);
+      }
+      p.lead {
+        margin: 0 0 14px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .drop {
+        border: 1.5px dashed var(--border);
+        border-radius: 10px;
+        background: var(--panel);
+        padding: 18px 12px;
+        text-align: center;
+        cursor: pointer;
+        transition: border-color 120ms, background 120ms;
+      }
+      .drop:hover, .drop.drag {
+        border-color: var(--accent);
+        background: #faf9ff;
+      }
+      .drop .big { font-weight: 600; }
+      .drop .hint { color: var(--muted); font-size: 11px; margin-top: 4px; }
+      input[type="file"] { display: none; }
+
+      .or {
+        text-align: center;
+        color: var(--muted);
+        font-size: 11px;
+        margin: 10px 0;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      textarea {
+        width: 100%;
+        height: 64px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px 10px;
+        font: inherit;
+        font-size: 11px;
+        resize: vertical;
+        background: var(--panel);
+        color: var(--text);
+      }
+      textarea:focus { outline: none; border-color: var(--accent); }
+
+      button.primary {
+        width: 100%;
+        margin-top: 12px;
+        padding: 9px 12px;
+        border: 0;
+        border-radius: 8px;
+        background: var(--accent);
+        color: #fff;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+      .status {
+        margin-top: 12px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        font-size: 12px;
+        display: none;
+      }
+      .status.show { display: block; }
+      .status.work { background: #eef2ff; color: #312e81; }
+      .status.ok { background: #ecfdf5; color: #065f46; }
+      .status.err { background: #fef2f2; color: #991b1b; }
+
+      ul.warnings {
+        margin: 8px 0 0;
+        padding-left: 18px;
+        font-size: 11px;
+        color: var(--muted);
+        max-height: 120px;
+        overflow: auto;
+      }
+      ul.warnings li { margin-bottom: 2px; }
+      code {
+        background: #eef0f3;
+        padding: 1px 4px;
+        border-radius: 4px;
+        font-size: 11px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1><span class="dot"></span> sleek.design import</h1>
+    <p class="lead">
+      Drop a <code>.figma.json</code> exported from sleek.design. Real Figma layers are
+      built from resolved geometry — pixel-true to your canvas.
+    </p>
+
+    <label class="drop" id="drop">
+      <div class="big">Choose file or paste JSON</div>
+      <div class="hint">.figma.json · sleek.figma-nodes v1</div>
+      <input type="file" id="file" accept=".json,application/json" />
+    </label>
+
+    <div class="or">— or paste —</div>
+    <textarea id="paste" placeholder='{"schema":"sleek.figma-nodes", …}'></textarea>
+
+    <button class="primary" id="go" disabled>Import into Figma</button>
+
+    <div class="status" id="status"></div>
+
+    <script>
+      // ---- Message contract with code.ts (main thread) ---------------------
+      //   parent.postMessage({ type: "import", doc, images }, "*")
+      //   code.ts replies with:
+      //     { type: "done",     screens, warnings }
+      //     { type: "error",    message }
+      const SCHEMA = "sleek.figma-nodes";
+      const VERSION = 1;
+
+      const drop = document.getElementById("drop");
+      const fileInput = document.getElementById("file");
+      const paste = document.getElementById("paste");
+      const go = document.getElementById("go");
+      const status = document.getElementById("status");
+
+      let chosenDoc = null;
+
+      function setStatus(kind, html) {
+        status.className = "status show " + kind;
+        status.innerHTML = html;
+      }
+      function clearStatus() {
+        status.className = "status";
+        status.innerHTML = "";
+      }
+
+      function validate(doc) {
+        if (!doc || typeof doc !== "object") return "Not a JSON object.";
+        if (doc.schema !== SCHEMA)
+          return `Wrong schema: expected "${SCHEMA}", got "${String(doc.schema)}".`;
+        if (doc.version !== VERSION)
+          return `Unsupported version ${doc.version} (expected ${VERSION}).`;
+        if (!Array.isArray(doc.frames) || !doc.frames.length)
+          return "Document has no frames.";
+        return null;
+      }
+
+      function setDoc(doc) {
+        const err = validate(doc);
+        if (err) {
+          chosenDoc = null;
+          go.disabled = true;
+          setStatus("err", err);
+          return false;
+        }
+        chosenDoc = doc;
+        go.disabled = false;
+        clearStatus();
+        return true;
+      }
+
+      async function readFile(f) {
+        const text = await f.text();
+        let doc;
+        try { doc = JSON.parse(text); }
+        catch (e) { setStatus("err", "Could not parse JSON: " + (e?.message || e)); return; }
+        if (setDoc(doc)) {
+          paste.value = "";
+          setStatus("work", `<strong>${f.name}</strong> ready — ${doc.frames.length} screen${doc.frames.length === 1 ? "" : "s"}.`);
+        }
+      }
+
+      // ---- File input + drag/drop ------------------------------------------
+      fileInput.addEventListener("change", () => {
+        const f = fileInput.files && fileInput.files[0];
+        if (f) readFile(f);
+      });
+      ["dragenter", "dragover"].forEach((ev) =>
+        drop.addEventListener(ev, (e) => {
+          e.preventDefault(); e.stopPropagation();
+          drop.classList.add("drag");
+        }),
+      );
+      ["dragleave", "drop"].forEach((ev) =>
+        drop.addEventListener(ev, (e) => {
+          e.preventDefault(); e.stopPropagation();
+          drop.classList.remove("drag");
+        }),
+      );
+      drop.addEventListener("drop", (e) => {
+        const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (f) readFile(f);
+      });
+
+      // ---- Paste ------------------------------------------------------------
+      paste.addEventListener("input", () => {
+        const raw = paste.value.trim();
+        if (!raw) { chosenDoc = null; go.disabled = true; clearStatus(); return; }
+        let doc;
+        try { doc = JSON.parse(raw); }
+        catch { go.disabled = true; return; } // let them keep typing
+        setDoc(doc);
+      });
+
+      // ---- Collect every IMAGE fill URL across all frames ------------------
+      function collectImageUrls(doc) {
+        const urls = new Set();
+        const walk = (node) => {
+          if (!node || typeof node !== "object") return;
+          if (Array.isArray(node.fills)) {
+            for (const f of node.fills) {
+              if (f && f.type === "IMAGE" && typeof f.url === "string") urls.add(f.url);
+            }
+          }
+          if (Array.isArray(node.children)) node.children.forEach(walk);
+        };
+        doc.frames.forEach(walk);
+        return [...urls];
+      }
+
+      // The plugin main thread cannot fetch cross-origin; pre-fetch every image
+      // byte stream here (UI thread) and hand the bytes over. data: URIs are
+      // decoded without a network round-trip.
+      async function fetchImageBytes(urls) {
+        const images = {};
+        let failed = 0;
+        await Promise.all(
+          urls.map(async (url) => {
+            try {
+              const res = await fetch(url, { mode: "cors" });
+              if (!res.ok) throw new Error("HTTP " + res.status);
+              const buf = new Uint8Array(await res.arrayBuffer());
+              images[url] = Array.from(buf);
+            } catch (e) {
+              failed++;
+              console.warn("image fetch failed", url, e);
+            }
+          }),
+        );
+        return { images, failed };
+      }
+
+      // ---- Run --------------------------------------------------------------
+      go.addEventListener("click", async () => {
+        if (!chosenDoc) return;
+        go.disabled = true;
+        const urls = collectImageUrls(chosenDoc);
+        setStatus(
+          "work",
+          urls.length
+            ? `Resolving ${urls.length} image${urls.length === 1 ? "" : "s"}…`
+            : "Building Figma layers…",
+        );
+        try {
+          const { images, failed } = urls.length
+            ? await fetchImageBytes(urls)
+            : { images: {}, failed: 0 };
+          parent.postMessage({ type: "import", doc: chosenDoc, images }, "*");
+          // 'done'/'error' arrive via the message listener below; keep the
+          // work banner up until then. Image failures are surfaced there too.
+          if (failed) {
+            chosenDoc._imageFailures = failed; // advisory; code.ts ignores unknown fields
+          }
+        } catch (e) {
+          go.disabled = false;
+          setStatus("err", "Import failed: " + (e?.message || e));
+        }
+      });
+
+      // ---- Replies from code.ts --------------------------------------------
+      window.addEventListener("message", (e) => {
+        const msg = (e.data && typeof e.data === "object") ? e.data : null;
+        if (!msg) return;
+        if (msg.type === "done") {
+          go.disabled = false;
+          const warns = Array.isArray(msg.warnings) ? msg.warnings : [];
+          const extra = chosenDoc && chosenDoc._imageFailures
+            ? `<li>${chosenDoc._imageFailures} image(s) could not be fetched and were skipped.</li>`
+            : "";
+          setStatus(
+            "ok",
+            `<strong>Done.</strong> Imported ${msg.screens} screen${msg.screens === 1 ? "" : "s"}.` +
+              (warns.length || extra
+                ? `<ul class="warnings">${warns.map((w) => `<li>${w}</li>`).join("")}${extra}</ul>`
+                : ""),
+          );
+        } else if (msg.type === "error") {
+          go.disabled = false;
+          setStatus("err", `<strong>Import failed.</strong><br/>${msg.message || "Unknown error."}`);
+        }
+      });
+    </script>
+  </body>
+</html>

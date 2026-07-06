@@ -11,6 +11,7 @@ type PhoneScreenFrameProps = {
   htmlVersion?: number;
   isWebsite?: boolean;
   frameWidth?: number | null;
+  frameHeight?: number | null;
   pageRef?: Ref<HTMLDivElement>;
   pageClassName?: string;
   onClickCapture?: MouseEventHandler<HTMLDivElement>;
@@ -45,6 +46,7 @@ export function PhoneScreenFrame({
   htmlVersion,
   isWebsite,
   frameWidth,
+  frameHeight,
   pageRef,
   pageClassName,
   onClickCapture,
@@ -79,6 +81,7 @@ export function PhoneScreenFrame({
         htmlVersion={htmlVersion}
         isWebsite={isWebsite}
         frameWidth={frameWidth}
+        frameHeight={frameHeight}
         pageRef={pageRef}
         pageClassName={pageClassName}
         onClickCapture={onClickCapture}

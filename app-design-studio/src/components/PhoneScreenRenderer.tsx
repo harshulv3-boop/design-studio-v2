@@ -12,7 +12,11 @@ import DOMPurify from "dompurify";
 
 type Platform = "ios" | "android";
 
-export const PHONE_SCREEN_PAGE_CLASS = "phone-screen-page";
+// Scoping/rendering conventions live in the IR module (shared with the
+// resolve pass and the visual test harness) — re-exported here for existing
+// consumers (FlowCanvas, workspace).
+export { PHONE_SCREEN_PAGE_CLASS, scopedPhoneScreenCss } from "@/lib/ir";
+import { PHONE_SCREEN_PAGE_CLASS, scopedPhoneScreenCss } from "@/lib/ir";
 
 export const PHONE_FRAME = {
   width: 375,
@@ -85,38 +89,6 @@ export function sanitizePhoneScreenHtml(html: string): string {
   });
 }
 
-function adaptCssForScopedPhoneScreen(css: string): string {
-  return (css || "").replace(/(^|[\s,{}])(:root)\b/g, "$1:scope, .screen");
-}
-
-export function scopedPhoneScreenCss(css: string): string {
-  const normalized = `
-:scope {
-  display: block;
-  width: 100%;
-  height: 100%;
-  box-sizing: border-box;
-  font-size: 16px;
-  /* Pin text-align so the screen never inherits it from the wrapper element.
-     Lite renders inside a <button> (UA default text-align: center) while Pro
-     renders inside a <div> (text-align: start); without this, identical
-     screens diverge — centered in Lite, left in Pro. Design-system CSS and
-     per-element styles can still override this. */
-  text-align: left;
-  /* Establish a containing block so position:fixed / width:100vw descendants
-     (e.g. a bottom tab bar) are sized and clipped to the phone frame instead
-     of escaping to the browser viewport. */
-  transform: translateZ(0);
-  contain: layout paint;
-  color: var(--text, inherit);
-  background: var(--bg, #000);
-}
-:scope, :scope * { box-sizing: border-box; }
-`;
-
-  return `@scope (.${PHONE_SCREEN_PAGE_CLASS}) to (.phone-screen-page-boundary) {\n${normalized}\n${adaptCssForScopedPhoneScreen(css)}\n}`;
-}
-
 function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
   if (!ref) return;
   if (typeof ref === "function") ref(value);
@@ -130,6 +102,10 @@ type PhoneScreenRendererProps = {
   htmlVersion?: number;
   isWebsite?: boolean;
   frameWidth?: number | null;
+  /** Fixed frame height — set for Figma imports (fixed-size design frames).
+   *  When set, the renderer switches to plain-canvas mode (no phone chrome)
+   *  and uses this exact height instead of the phone height or website auto. */
+  frameHeight?: number | null;
   pageRef?: Ref<HTMLDivElement>;
   rootRef?: Ref<HTMLDivElement>;
   className?: string;
@@ -155,6 +131,7 @@ export function PhoneScreenRenderer({
   htmlVersion,
   isWebsite = false,
   frameWidth = null,
+  frameHeight = null,
   pageRef,
   rootRef,
   className = "",
@@ -180,7 +157,14 @@ export function PhoneScreenRenderer({
     // returns to a previous value via undo/redo.
   }, [html, htmlVersion, afterHtmlRender]);
 
-  const resolvedWidth = isWebsite && frameWidth ? frameWidth : PHONE_FRAME.width;
+  // Plain-canvas mode: website (scrolling, auto height) OR figma (fixed-size
+  // design frame with an explicit height). Both drop the phone chrome/bezel
+  // and use the provided frameWidth instead of the phone width.
+  const plain = isWebsite || frameHeight != null;
+  const resolvedWidth = plain && frameWidth ? frameWidth : PHONE_FRAME.width;
+  // Height: figma → its real frame height; website → auto (scrolls); app → phone height.
+  const resolvedHeight =
+    frameHeight != null ? frameHeight : isWebsite ? "auto" : PHONE_FRAME.height;
 
   // Scoping the design-system CSS runs a regex over the entire stylesheet,
   // which for cloned websites can be ~500KB. PhoneScreenRenderer re-renders on
@@ -195,13 +179,13 @@ export function PhoneScreenRenderer({
       className={`relative ${className}`}
       style={{
         width: resolvedWidth,
-        height: isWebsite ? "auto" : PHONE_FRAME.height,
+        height: resolvedHeight,
         ...rootStyle,
       }}
       onClickCapture={onClickCapture}
     >
-      {!isWebsite && <PhoneFrameOutline platform={platform} />}
-      {!isWebsite && <PhoneNotch platform={platform} />}
+      {!plain && <PhoneFrameOutline platform={platform} />}
+      {!plain && <PhoneNotch platform={platform} />}
       <div
         ref={(node) => {
           localPageRef.current = node;
@@ -215,10 +199,10 @@ export function PhoneScreenRenderer({
           display: "block",
           overflow: "hidden",
           background: "#000",
-          borderRadius: isWebsite ? 0 : PHONE_FRAME.contentRadius,
+          borderRadius: plain ? 0 : PHONE_FRAME.contentRadius,
           fontSize: "16px",
           width: resolvedWidth,
-          height: isWebsite ? "auto" : PHONE_FRAME.height,
+          height: resolvedHeight,
           ...pageStyle,
         }}
         data-testid="canvas-page"

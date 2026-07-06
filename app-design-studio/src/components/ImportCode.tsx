@@ -12,6 +12,12 @@ import {
   parseHtmlToArtifact,
   type LanguageId,
 } from "@/lib/import-code";
+import {
+  assembleImportedProject,
+  isSleekHtmlExport,
+  parseSleekHtmlExport,
+  projectFromSleekHtmlExport,
+} from "@/lib/ir";
 
 const ACCEPT = [...LANGUAGES.filter((l) => l.available).flatMap((l) => l.exts), ".zip"].join(",");
 
@@ -40,7 +46,12 @@ export default function ImportCode({ onOpenProject }: { onOpenProject: (id: stri
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [uploadName, setUploadName] = useState<string | null>(null);
-  const [manifestProject, setManifestProject] = useState<Awaited<ReturnType<typeof readProjectArchive>>["project"] | null>(null);
+  // Figma import takes a share URL + token instead of pasted code.
+  const [figmaUrl, setFigmaUrl] = useState("");
+  const [figmaToken, setFigmaToken] = useState("");
+  const [manifestProject, setManifestProject] = useState<
+    Awaited<ReturnType<typeof readProjectArchive>>["project"] | null
+  >(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   function onPaste(next: string) {
@@ -88,6 +99,58 @@ export default function ImportCode({ onOpenProject }: { onOpenProject: (id: stri
   }
 
   async function runImport() {
+    // Figma import — separate flow: URL + token → server calls Figma REST API.
+    if (lang === "figma") {
+      const url = figmaUrl.trim();
+      const token = figmaToken.trim();
+      if (!url || !token) {
+        setError("Both a Figma share URL and a personal access token are required.");
+        return;
+      }
+      setBusy(true);
+      setError(null);
+      setWarnings([]);
+      try {
+        const res = await fetch("/api/import-figma", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url, token }),
+        });
+        const data = (await res.json().catch(() => null)) as {
+          name?: string;
+          screens?: { id: string; name: string; role: string; html: string }[];
+          warnings?: string[];
+          frame?: { w: number; h: number };
+          error?: string;
+        } | null;
+        if (!res.ok || !data?.screens?.length) {
+          throw new ImportError(data?.error || `Figma import failed (HTTP ${res.status}).`);
+        }
+        const project = assembleImportedProject({
+          name: data.name || "Imported from Figma",
+          screens: data.screens,
+          designSystemCss: "",
+          // Figma imports are free-form designs of any size — render on a plain
+          // canvas (no phone chrome) at the frame's real dimensions, distinct
+          // from url-to-code "website" projects.
+          artifactType: "figma",
+          frame: data.frame ? { w: data.frame.w, h: data.frame.h } : undefined,
+        });
+        saveProject(project);
+        await new Promise((r) => setTimeout(r, 250));
+        if (data.warnings?.length) setWarnings(data.warnings);
+        toast.success(`Imported ${project.name} from Figma — opening editor`);
+        onOpenProject(project.id);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+        toast.error(`Figma import failed: ${message}`);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     const source = code.trim();
     if (!source) return;
     setBusy(true);
@@ -108,7 +171,16 @@ export default function ImportCode({ onOpenProject }: { onOpenProject: (id: stri
       const title = guessTitle(source, lang, uploadName ?? undefined);
 
       if (def?.kind === "client") {
-        // HTML/CSS — parse in the browser, no render step needed.
+        // Our own HTML export roundtrips all screens + design CSS losslessly.
+        if (isSleekHtmlExport(source)) {
+          const project = projectFromSleekHtmlExport(parseSleekHtmlExport(source));
+          saveProject(project);
+          await new Promise((r) => setTimeout(r, 250));
+          toast.success(`Imported ${project.name} — opening editor`);
+          onOpenProject(project.id);
+          return;
+        }
+        // Arbitrary HTML/CSS — parse in the browser, no render step needed.
         const parsed = parseHtmlToArtifact(source);
         html = parsed.html;
         css = parsed.css;
@@ -119,11 +191,36 @@ export default function ImportCode({ onOpenProject }: { onOpenProject: (id: stri
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ code: source, language: lang }),
         });
-        const data = (await res.json().catch(() => null)) as
-          | { html?: string; css?: string; warnings?: string[]; error?: string }
-          | null;
+        const data = (await res.json().catch(() => null)) as {
+          html?: string;
+          css?: string;
+          screens?: { id: string; name: string; role: string; html: string }[];
+          meta?: {
+            name?: string;
+            artifactType?: "app" | "website";
+            frame?: { w: number; h?: number };
+          };
+          warnings?: string[];
+          error?: string;
+        } | null;
         if (!res.ok || !data?.html) {
           throw new ImportError(data?.error || `Import failed (HTTP ${res.status}).`);
+        }
+        // Our own real-JSX export: every screen comes back with its identity —
+        // assemble a multi-screen project instead of stitching into one page.
+        if (data.screens && data.screens.length > 0) {
+          const project = assembleImportedProject({
+            name: data.meta?.name || title,
+            screens: data.screens,
+            designSystemCss: data.css || "",
+            artifactType: data.meta?.artifactType,
+            frame: data.meta?.frame,
+          });
+          saveProject(project);
+          await new Promise((r) => setTimeout(r, 250));
+          toast.success(`Imported ${project.name} — opening editor`);
+          onOpenProject(project.id);
+          return;
         }
         // Rendered React can carry its styling as an inline <style> (e.g. our own
         // TSX export embeds DESIGN_SYSTEM_CSS that way). Run it through the same
@@ -177,49 +274,99 @@ export default function ImportCode({ onOpenProject }: { onOpenProject: (id: stri
       </div>
 
       <div className="rounded-2xl border border-border bg-surface/60 p-2">
-        <textarea
-          value={code}
-          onChange={(e) => onPaste(e.target.value)}
-          placeholder={
-            lang === "react"
-              ? "Paste a self-contained React component (JSX/TSX)…\n\nexport default function App() {\n  return <div style={{ padding: 24 }}>Hello</div>;\n}"
-              : "Paste HTML/CSS…\n\n<style> .card { padding: 24px } </style>\n<div class=\"card\">Hello</div>"
-          }
-          spellCheck={false}
-          className="h-52 w-full resize-none bg-transparent px-2 py-1.5 font-mono text-[13px] leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
-          data-testid="import-code-input"
-        />
-        <div className="flex items-center justify-between gap-3 border-t border-border/60 px-1 pt-2">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => fileRef.current?.click()}
-              className="inline-flex items-center gap-1.5 rounded-full bg-surface/80 px-3 py-2 text-xs font-medium text-foreground/90 transition-colors hover:text-foreground"
-              data-testid="import-upload-button"
-            >
-              <FileUp className="h-3.5 w-3.5" />
-              Upload file
-            </button>
+        {lang === "figma" ? (
+          // Figma import: share URL + personal access token (no pasted code).
+          // The token is sent only to /api/import-figma and never persisted.
+          <div className="flex flex-col gap-2 px-1 py-1.5">
             <input
-              ref={fileRef}
-              type="file"
-              accept={ACCEPT}
-              className="hidden"
+              type="url"
+              value={figmaUrl}
               onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void onFile(f);
-                e.target.value = "";
+                setFigmaUrl(e.target.value);
+                setError(null);
               }}
-              data-testid="import-file-input"
+              placeholder="https://www.figma.com/design/<key>/<title>?node-id=…"
+              spellCheck={false}
+              className="w-full rounded-lg border border-border/60 bg-transparent px-3 py-2 font-mono text-[13px] text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-brand"
+              data-testid="import-figma-url"
             />
-            {uploadName && (
-              <span className="max-w-[160px] truncate font-mono text-[11px] text-muted-foreground">{uploadName}</span>
-            )}
+            <input
+              type="password"
+              value={figmaToken}
+              onChange={(e) => {
+                setFigmaToken(e.target.value);
+                setError(null);
+              }}
+              placeholder="Figma personal access token (Settings → Security)"
+              spellCheck={false}
+              autoComplete="off"
+              className="w-full rounded-lg border border-border/60 bg-transparent px-3 py-2 font-mono text-[13px] text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-brand"
+              data-testid="import-figma-token"
+            />
+            <p className="px-1 text-[11px] leading-relaxed text-muted-foreground/70">
+              The token is used once to read the file via Figma's API and is never
+              stored. Generate one at{" "}
+              <span className="font-mono">Figma → Settings → Security → Personal access tokens</span>.
+            </p>
           </div>
+        ) : (
+          <textarea
+            value={code}
+            onChange={(e) => onPaste(e.target.value)}
+            placeholder={
+              lang === "react"
+                ? "Paste a self-contained React component (JSX/TSX)…\n\nexport default function App() {\n  return <div style={{ padding: 24 }}>Hello</div>;\n}"
+                : 'Paste HTML/CSS…\n\n<style> .card { padding: 24px } </style>\n<div class="card">Hello</div>'
+            }
+            spellCheck={false}
+            className="h-52 w-full resize-none bg-transparent px-2 py-1.5 font-mono text-[13px] leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
+            data-testid="import-code-input"
+          />
+        )}
+        <div className="flex items-center justify-between gap-3 border-t border-border/60 px-1 pt-2">
+          {lang === "figma" ? (
+            <span className="px-1 text-[11px] text-muted-foreground/70">
+              Imports the selected frame as editable canvas layers.
+            </span>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="inline-flex items-center gap-1.5 rounded-full bg-surface/80 px-3 py-2 text-xs font-medium text-foreground/90 transition-colors hover:text-foreground"
+                data-testid="import-upload-button"
+              >
+                <FileUp className="h-3.5 w-3.5" />
+                Upload file
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept={ACCEPT}
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void onFile(f);
+                  e.target.value = "";
+                }}
+                data-testid="import-file-input"
+              />
+              {uploadName && (
+                <span className="max-w-[160px] truncate font-mono text-[11px] text-muted-foreground">
+                  {uploadName}
+                </span>
+              )}
+            </div>
+          )}
           <button
             type="button"
             onClick={() => void runImport()}
-            disabled={!code.trim() || busy}
+            disabled={
+              busy ||
+              (lang === "figma"
+                ? !figmaUrl.trim() || !figmaToken.trim()
+                : !code.trim())
+            }
             className="inline-flex shrink-0 items-center gap-2 rounded-full bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-[0_10px_30px_-8px_rgba(255,120,40,0.8)] transition-all hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
             data-testid="import-run-button"
           >

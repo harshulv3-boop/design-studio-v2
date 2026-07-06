@@ -17,7 +17,7 @@ import type { Project } from "./screen-schema";
 // handler and they slot into the same load path with no UI/plumbing changes.
 // ---------------------------------------------------------------------------
 
-export type LanguageId = "html" | "react" | "vue" | "angular" | "flutter" | "swiftui";
+export type LanguageId = "html" | "react" | "vue" | "angular" | "figma" | "flutter" | "swiftui";
 
 export type LanguageDef = {
   id: LanguageId;
@@ -35,6 +35,9 @@ export const LANGUAGES: LanguageDef[] = [
   { id: "react", label: "React (JSX/TSX)", exts: [".jsx", ".tsx"], kind: "server", available: true },
   { id: "vue", label: "Vue", exts: [".vue"], kind: "server", available: true },
   { id: "angular", label: "Angular", exts: [".component.ts"], kind: "server", available: true },
+  // Figma import takes a share URL + token (not pasted code); handled by a
+  // dedicated branch in ImportCode that swaps the textarea for URL fields.
+  { id: "figma", label: "Figma", exts: [], kind: "server", available: true },
   // Coming soon — wire a parser (client) or an /api/import-code handler (server)
   // and flip `available` to true; nothing else needs to change.
   { id: "flutter", label: "Flutter", exts: [".dart"], kind: "server", available: false },

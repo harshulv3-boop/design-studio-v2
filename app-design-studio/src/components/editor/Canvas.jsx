@@ -37,6 +37,11 @@ export default function Canvas() {
   const _project = useEditorStore((s) => s.project);
   const isWebsite = _project?.format_config?.artifactType === "website";
   const frameWidth = _project?.format_config?.frame?.width || null;
+  // Figma imports are fixed-size design frames — pass their real height so the
+  // renderer drops the phone chrome and uses the exact frame dimensions.
+  const frameHeight = _project?.format_config?.artifactType === "figma"
+    ? (_project?.format_config?.frame?.height || null)
+    : null;
   const platform = _project?.platform === "android" ? "android" : "ios";
 
   const htmlVersion = useEditorStore((s) => s.htmlVersion);
@@ -1567,6 +1572,7 @@ export default function Canvas() {
         css={designSystemCss}
         isWebsite={isWebsite}
         frameWidth={frameWidth}
+        frameHeight={frameHeight}
         pageRef={pageRef}
         pageClassName="pro-canvas-page"
         onClickCapture={onPageClickCapture}

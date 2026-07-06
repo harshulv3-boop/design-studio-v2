@@ -13,7 +13,7 @@ import { createFileRoute } from "@tanstack/react-router";
  */
 const ENGINE_URL = process.env.CLONE_ENGINE_URL || "http://localhost:8081";
 
-const ALLOWED = /^(start|[a-zA-Z0-9-]+\/(status|editable|screenshot|download))$/;
+const ALLOWED = /^(start|resolve|[a-zA-Z0-9-]+\/(status|editable|screenshot|download))$/;
 
 async function proxy(request: Request, splat: string): Promise<Response> {
   if (!ALLOWED.test(splat)) {

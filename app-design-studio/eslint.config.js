@@ -30,6 +30,17 @@ export default tseslint.config(
                 "TanStack Start does not use the Next.js `server-only` package. Rename the module to `*.server.ts` or mark it with `@tanstack/react-start/server-only`.",
             },
           ],
+          patterns: [
+            {
+              // The IR is a boundary-only conversion layer. Everything outside
+              // src/lib/ir must go through the façade (src/lib/ir/index.ts),
+              // which only speaks Project/files — never IRDocument. This is
+              // what structurally prevents the IR from becoming a second live
+              // copy of canvas state.
+              group: ["@/lib/ir/*", "!@/lib/ir/index"],
+              message: "Import from '@/lib/ir' (the façade) only — IR internals are boundary-only.",
+            },
+          ],
         },
       ],
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],

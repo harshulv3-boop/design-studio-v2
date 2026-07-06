@@ -7,3 +7,10 @@ dist/
 .DS_Store
 .cache/
 .vite/
+
+# Secrets — Figma token lives here for local live testing
+.env.figma-test
+# Knowledge-graph cache (codebase-memory-mcp)
+.codebase-memory/
+# Generated evidence artifacts (before/after proof dumps)
+app-design-studio/scripts/.evidence/
