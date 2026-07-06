@@ -8,16 +8,22 @@ function loadLocalEnv() {
     path.join(process.cwd(), "app-design-studio", ".env"),
   ];
 
-  for (const file of candidates) {
-    if (!fs.existsSync(file)) continue;
-    const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
-      const [key, ...valueParts] = trimmed.split("=");
-      if (!process.env[key]) process.env[key] = valueParts.join("=");
+  const file = candidates.find((f) => fs.existsSync(f));
+  if (!file) return;
+  const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+    const eq = trimmed.indexOf("=");
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
     }
-    return;
+    if (key) process.env[key] = value;
   }
 }
 
