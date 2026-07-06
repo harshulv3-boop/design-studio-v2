@@ -12,7 +12,22 @@ import {
 } from "@/lib/screen-roles";
 import { TEMPLATES } from "@/lib/templates";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Check, ChevronDown, Clock, Code2, Globe, Image as ImageIcon, Layers, Minus, Plus, Send, Sparkle, Sparkles, Trash2, Zap } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Clock,
+  Code2,
+  Globe,
+  Image as ImageIcon,
+  Layers,
+  Minus,
+  Plus,
+  Send,
+  Sparkle,
+  Sparkles,
+  Trash2,
+  Zap,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
 export const Route = createFileRoute("/")({
@@ -42,7 +57,9 @@ function ProjectThumbnail({ summary }: { summary: ProjectSummary }) {
     let hostname = "website";
     try {
       hostname = new URL(summary.format_config?.source?.url || "").hostname.replace(/^www\./, "");
-    } catch { /* keep default */ }
+    } catch {
+      /* keep default */
+    }
     return (
       <div
         className="pointer-events-none flex flex-col items-center justify-center gap-2 overflow-hidden rounded-xl border border-border/70 bg-gradient-to-b from-panel to-surface"
@@ -52,9 +69,15 @@ function ProjectThumbnail({ summary }: { summary: ProjectSummary }) {
         <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand/15">
           <Globe className="h-6 w-6 text-brand" />
         </div>
-        <div className="max-w-[85%] truncate text-center text-[11px] font-semibold text-foreground">{summary.name}</div>
-        <div className="max-w-[85%] truncate text-center font-mono text-[9px] text-muted-foreground">{hostname}</div>
-        <div className="rounded-full border border-border bg-surface/70 px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider text-muted-foreground">Website</div>
+        <div className="max-w-[85%] truncate text-center text-[11px] font-semibold text-foreground">
+          {summary.name}
+        </div>
+        <div className="max-w-[85%] truncate text-center font-mono text-[9px] text-muted-foreground">
+          {hostname}
+        </div>
+        <div className="rounded-full border border-border bg-surface/70 px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider text-muted-foreground">
+          Website
+        </div>
       </div>
     );
   }
@@ -73,8 +96,12 @@ function ProjectThumbnail({ summary }: { summary: ProjectSummary }) {
         <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand/15">
           <Layers className="h-6 w-6 text-brand" />
         </div>
-        <div className="max-w-[85%] truncate text-center text-[11px] font-semibold text-foreground">{summary.name}</div>
-        <div className="rounded-full border border-border bg-surface/70 px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider text-muted-foreground">{dims}</div>
+        <div className="max-w-[85%] truncate text-center text-[11px] font-semibold text-foreground">
+          {summary.name}
+        </div>
+        <div className="rounded-full border border-border bg-surface/70 px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider text-muted-foreground">
+          {dims}
+        </div>
       </div>
     );
   }
@@ -85,7 +112,14 @@ function ProjectThumbnail({ summary }: { summary: ProjectSummary }) {
       style={{ width: W, height: Math.round(812 * scale) }}
       aria-hidden
     >
-      <div style={{ width: 375, height: 812, transform: `scale(${scale})`, transformOrigin: "top left" }}>
+      <div
+        style={{
+          width: 375,
+          height: 812,
+          transform: `scale(${scale})`,
+          transformOrigin: "top left",
+        }}
+      >
         <PhoneScreenFrame
           platform={summary.platform}
           html={summary.firstScreenHtml}
@@ -126,7 +160,10 @@ function SavedProjects({ onOpen }: { onOpen: (id: string) => void }) {
             tabIndex={0}
             onClick={() => onOpen(p.id)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(p.id); }
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onOpen(p.id);
+              }
             }}
             className="group relative flex cursor-pointer flex-col gap-3 rounded-2xl border border-border/70 bg-panel/60 p-3 text-left transition-all hover:border-brand/60 hover:bg-panel"
             data-testid="saved-project-card"
@@ -154,11 +191,16 @@ function SavedProjects({ onOpen }: { onOpen: (id: string) => void }) {
                   {timeAgo(p.updatedAt)}
                 </span>
                 <span className="text-border">·</span>
-                <span>{p.screenCount} screen{p.screenCount === 1 ? "" : "s"}</span>
+                <span>
+                  {p.screenCount} screen{p.screenCount === 1 ? "" : "s"}
+                </span>
               </div>
             </div>
             <button
-              onClick={(e) => { e.stopPropagation(); remove(p.id); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                remove(p.id);
+              }}
               className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full border border-border bg-surface/90 text-muted-foreground opacity-0 backdrop-blur transition-all hover:text-red-400 group-hover:opacity-100"
               aria-label={`Delete ${p.name}`}
               title="Delete project"
@@ -179,7 +221,9 @@ function SleekLogo() {
       <div className="relative flex h-7 w-7 items-center justify-center rounded-full bg-brand shadow-[0_0_20px_-2px_var(--brand)]">
         <span className="font-serif text-base font-bold italic leading-none text-white">S</span>
       </div>
-      <span className="text-lg font-semibold tracking-tight">sleek<span className="text-muted-foreground">.design</span></span>
+      <span className="text-lg font-semibold tracking-tight">
+        sleek<span className="text-muted-foreground">.design</span>
+      </span>
     </div>
   );
 }
@@ -222,7 +266,8 @@ function Landing() {
     if (!withIdea.trim()) return;
     const screens = resolveScreenSelection(selectedScreenIds);
     const params: Record<string, string> = { idea: withIdea, platform };
-    if (screens.length) params.screens = screens.map((s) => `${s.id}:${s.name}:${s.role}`).join(",");
+    if (screens.length)
+      params.screens = screens.map((s) => `${s.id}:${s.name}:${s.role}`).join(",");
     navigate({ to: "/workspace", search: () => params });
   }
 
@@ -242,24 +287,34 @@ function Landing() {
       />
       <div
         className="pointer-events-none absolute inset-x-0 top-[62%] h-px"
-        style={{ background: "linear-gradient(90deg, transparent, rgba(255,140,60,0.9), transparent)" }}
+        style={{
+          background: "linear-gradient(90deg, transparent, rgba(255,140,60,0.9), transparent)",
+        }}
       />
 
       {/* Nav */}
       <header className="relative z-10 mx-auto flex max-w-7xl items-center justify-between px-8 py-6">
         <SleekLogo />
         <nav className="hidden items-center gap-8 text-sm text-foreground/85 md:flex">
-          <a href="#pricing" className="hover:text-foreground">Pricing</a>
+          <a href="#pricing" className="hover:text-foreground">
+            Pricing
+          </a>
           <button className="flex items-center gap-1 hover:text-foreground">
             Resources <ChevronDown className="h-3.5 w-3.5" />
           </button>
-          <a href="#templates" className="hover:text-foreground">App Store Screenshots</a>
-          <a href="#blog" className="hover:text-foreground">Blog</a>
+          <a href="#templates" className="hover:text-foreground">
+            App Store Screenshots
+          </a>
+          <a href="#blog" className="hover:text-foreground">
+            Blog
+          </a>
         </nav>
         <div className="flex items-center gap-4">
           <button className="text-sm text-foreground/85 hover:text-foreground">Log In</button>
           <button
-            onClick={() => launch("A modern productivity app with focus timer, tasks, and calendar")}
+            onClick={() =>
+              launch("A modern productivity app with focus timer, tasks, and calendar")
+            }
             className="rounded-full bg-brand px-5 py-2 text-sm font-semibold text-white shadow-[0_8px_28px_-6px_rgba(255,120,40,0.7)] transition-transform hover:scale-[1.02]"
           >
             Get Started
@@ -272,11 +327,11 @@ function Landing() {
         <div className="mx-auto max-w-4xl text-center">
           <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-border/70 bg-panel/60 px-4 py-1.5 text-[13px] font-medium text-foreground/90 backdrop-blur">
             <Sparkles className="h-3.5 w-3.5 text-brand" />
-            Claude Code can now design your app with Sleek <span className="text-muted-foreground">→</span>
+            Claude Code can now design your app with Sleek{" "}
+            <span className="text-muted-foreground">→</span>
           </div>
           <h1 className="text-balance text-6xl font-bold leading-[1.02] tracking-tight md:text-[76px]">
-            Design mobile apps{" "}
-            <span className="text-brand">in&nbsp;minutes</span>{" "}
+            Design mobile apps <span className="text-brand">in&nbsp;minutes</span>{" "}
             <Zap className="inline h-11 w-11 -translate-y-2 fill-brand text-brand md:h-14 md:w-14" />
           </h1>
           <p className="mx-auto mt-6 max-w-xl text-pretty text-lg text-foreground/70">
@@ -290,7 +345,9 @@ function Landing() {
                 <button
                   onClick={() => setCreationMode("app")}
                   className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
-                    creationMode === "app" ? "bg-brand text-white" : "text-muted-foreground hover:text-foreground"
+                    creationMode === "app"
+                      ? "bg-brand text-white"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                   data-testid="mode-tab-app"
                 >
@@ -300,7 +357,9 @@ function Landing() {
                 <button
                   onClick={() => setCreationMode("clone")}
                   className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
-                    creationMode === "clone" ? "bg-brand text-white" : "text-muted-foreground hover:text-foreground"
+                    creationMode === "clone"
+                      ? "bg-brand text-white"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                   data-testid="mode-tab-clone"
                 >
@@ -310,7 +369,9 @@ function Landing() {
                 <button
                   onClick={() => setCreationMode("import")}
                   className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
-                    creationMode === "import" ? "bg-brand text-white" : "text-muted-foreground hover:text-foreground"
+                    creationMode === "import"
+                      ? "bg-brand text-white"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                   data-testid="mode-tab-import"
                 >
@@ -343,7 +404,9 @@ function Landing() {
                         {selectedScreenIds.length} selected
                       </span>
                     </div>
-                    <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${screensOpen ? "rotate-180" : ""}`} />
+                    <ChevronDown
+                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${screensOpen ? "rotate-180" : ""}`}
+                    />
                   </button>
                   {screensOpen && (
                     <div className="border-t border-border/50 px-4 py-3">
@@ -362,7 +425,9 @@ function Landing() {
                           >
                             <Minus className="h-3 w-3" />
                           </button>
-                          <span className="w-6 text-center text-xs font-semibold tabular-nums">{selectedScreenIds.length}</span>
+                          <span className="w-6 text-center text-xs font-semibold tabular-nums">
+                            {selectedScreenIds.length}
+                          </span>
                           <button
                             type="button"
                             onClick={() => setScreenCount(selectedScreenIds.length + 1)}
@@ -398,7 +463,8 @@ function Landing() {
                         })}
                       </div>
                       <div className="mt-2 text-[10px] text-muted-foreground">
-                        Defaults selected — generate as-is or customize. Used as a guide for the AI plan.
+                        Defaults selected — generate as-is or customize. Used as a guide for the AI
+                        plan.
                       </div>
                     </div>
                   )}
@@ -411,7 +477,10 @@ function Landing() {
                 />
                 <div className="mt-2 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <button className="flex h-10 w-10 items-center justify-center rounded-full bg-surface/80 text-muted-foreground transition-colors hover:text-foreground" aria-label="Upload image">
+                    <button
+                      className="flex h-10 w-10 items-center justify-center rounded-full bg-surface/80 text-muted-foreground transition-colors hover:text-foreground"
+                      aria-label="Upload image"
+                    >
                       <ImageIcon className="h-4 w-4" />
                     </button>
                     <button
@@ -480,14 +549,31 @@ function Landing() {
       {/* Pricing */}
       <section id="pricing" className="relative z-10 mx-auto max-w-5xl px-8 pb-24">
         <div className="mb-10 text-center">
-          <div className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-brand">Pricing</div>
-          <h2 className="mt-2 text-3xl font-bold tracking-tight">Start free. Scale when your team does.</h2>
+          <div className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-brand">
+            Pricing
+          </div>
+          <h2 className="mt-2 text-3xl font-bold tracking-tight">
+            Start free. Scale when your team does.
+          </h2>
         </div>
         <div className="grid gap-5 md:grid-cols-3">
           {[
-            { name: "Free", price: "$0", perks: ["1 project", "50 AI credits / month", "Export to code"] },
-            { name: "Pro", price: "$24", perks: ["Unlimited projects", "2,000 credits / month", "Figma export"], featured: true },
-            { name: "Team", price: "$79", perks: ["Everything in Pro", "Team collaboration", "Priority generation"] },
+            {
+              name: "Free",
+              price: "$0",
+              perks: ["1 project", "50 AI credits / month", "Export to code"],
+            },
+            {
+              name: "Pro",
+              price: "$24",
+              perks: ["Unlimited projects", "2,000 credits / month", "Figma export"],
+              featured: true,
+            },
+            {
+              name: "Team",
+              price: "$79",
+              perks: ["Everything in Pro", "Team collaboration", "Priority generation"],
+            },
           ].map((t) => (
             <div
               key={t.name}

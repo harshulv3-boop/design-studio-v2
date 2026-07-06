@@ -16,24 +16,70 @@ export type ScreenTypePreset = {
 
 // Sensible default selection (used when the user doesn't customize): a
 // connected 5-screen flow covering the most common mobile-app surfaces.
-export const DEFAULT_SELECTED_SCREEN_IDS = ["home", "dashboard", "profile", "settings", "notifications"];
+export const DEFAULT_SELECTED_SCREEN_IDS = [
+  "home",
+  "dashboard",
+  "profile",
+  "settings",
+  "notifications",
+];
 
 export const SCREEN_TYPE_CATALOG: ScreenTypePreset[] = [
-  { id: "home", name: "Home", role: "home", description: "Primary landing surface with key entry points" },
-  { id: "dashboard", name: "Dashboard", role: "dashboard", description: "Overview with stats, summaries, and activity" },
-  { id: "profile", name: "Profile", role: "profile", description: "User account, avatar, and personal details" },
-  { id: "settings", name: "Settings", role: "settings", description: "Preferences, toggles, and account configuration" },
-  { id: "analytics", name: "Analytics", role: "analytics", description: "Charts, metrics, and trends" },
-  { id: "notifications", name: "Notifications", role: "notifications", description: "Activity feed and alerts inbox" },
-  { id: "search", name: "Search", role: "search", description: "Discovery / search results surface" },
+  {
+    id: "home",
+    name: "Home",
+    role: "home",
+    description: "Primary landing surface with key entry points",
+  },
+  {
+    id: "dashboard",
+    name: "Dashboard",
+    role: "dashboard",
+    description: "Overview with stats, summaries, and activity",
+  },
+  {
+    id: "profile",
+    name: "Profile",
+    role: "profile",
+    description: "User account, avatar, and personal details",
+  },
+  {
+    id: "settings",
+    name: "Settings",
+    role: "settings",
+    description: "Preferences, toggles, and account configuration",
+  },
+  {
+    id: "analytics",
+    name: "Analytics",
+    role: "analytics",
+    description: "Charts, metrics, and trends",
+  },
+  {
+    id: "notifications",
+    name: "Notifications",
+    role: "notifications",
+    description: "Activity feed and alerts inbox",
+  },
+  {
+    id: "search",
+    name: "Search",
+    role: "search",
+    description: "Discovery / search results surface",
+  },
   { id: "details", name: "Details", role: "details", description: "Item / content detail view" },
   { id: "inbox", name: "Inbox", role: "inbox", description: "Messages or conversations list" },
-  { id: "onboarding", name: "Onboarding", role: "onboarding", description: "Welcome / getting-started flow" },
+  {
+    id: "onboarding",
+    name: "Onboarding",
+    role: "onboarding",
+    description: "Welcome / getting-started flow",
+  },
   { id: "auth", name: "Sign In", role: "auth", description: "Login / sign-up / authentication" },
   { id: "checkout", name: "Checkout", role: "checkout", description: "Purchase / payment flow" },
 ];
 
-// Hard bounds — must stay inside ProjectSchema's screens array (min 1, max 24).
+// Hard bounds - must stay inside ProjectSchema's screens array (min 1, max 24).
 export const MIN_SCREEN_COUNT = 1;
 export const MAX_SCREEN_COUNT = 12;
 

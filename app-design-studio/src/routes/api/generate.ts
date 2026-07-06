@@ -1,4 +1,8 @@
-import { createGeminiProvider, createLovableAiGatewayProvider, createOpenAiProvider } from "@/lib/ai-gateway.server";
+import {
+  createGeminiProvider,
+  createLovableAiGatewayProvider,
+  createOpenAiProvider,
+} from "@/lib/ai-gateway.server";
 import { ProjectSchema, type Project } from "@/lib/screen-schema";
 import { createFileRoute } from "@tanstack/react-router";
 import { generateText } from "ai";
@@ -14,10 +18,21 @@ import { generateText } from "ai";
 
 function extractJson(text: string): unknown {
   const t = text.trim();
-  try { return JSON.parse(t); } catch { /* fall through */ }
+  try {
+    return JSON.parse(t);
+  } catch {
+    /* fall through */
+  }
   const fence = t.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  if (fence) { try { return JSON.parse(fence[1]); } catch { /* fall */ } }
-  const s = t.indexOf("{"); const e = t.lastIndexOf("}");
+  if (fence) {
+    try {
+      return JSON.parse(fence[1]);
+    } catch {
+      /* fall */
+    }
+  }
+  const s = t.indexOf("{");
+  const e = t.lastIndexOf("}");
   if (s >= 0 && e > s) return JSON.parse(t.slice(s, e + 1));
   throw new Error("No JSON found in model response");
 }
@@ -32,7 +47,11 @@ function extractHtml(text: string): string {
 // Run `fn` over `items` with at most `limit` in flight at once, preserving
 // input order in the result. Independent model calls (screens) parallelize
 // safely; the limit avoids bursting the provider's rate limit on large apps.
-async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let cursor = 0;
   const worker = async () => {
@@ -52,13 +71,20 @@ function compactCssForTheme(css: string, maxChars = 40_000): string {
     .replace(/\s+/g, " ")
     .trim();
   if (cleaned.length <= maxChars) return cleaned;
-  const rootMatches = cleaned.match(/(?:^|[^\w-])(?::root|\.screen|body|html)[^{]*\{[^}]*\}/gi) ?? [];
-  const importantMatches = cleaned.match(/[^{}]*(?:color|font|button|card|hero|nav|header|footer|section|container|page|screen)[^{}]*\{[^}]*\}/gi) ?? [];
+  const rootMatches =
+    cleaned.match(/(?:^|[^\w-])(?::root|\.screen|body|html)[^{]*\{[^}]*\}/gi) ?? [];
+  const importantMatches =
+    cleaned.match(
+      /[^{}]*(?:color|font|button|card|hero|nav|header|footer|section|container|page|screen)[^{}]*\{[^}]*\}/gi,
+    ) ?? [];
   const prioritized = [...rootMatches, ...importantMatches].join("\n").slice(0, maxChars);
   return prioritized || cleaned.slice(0, maxChars);
 }
 
-function systemPhase1() {
+function systemPhase1(preselectedScreens?: PreselectedScreen[]) {
+  const screenInstruction = preselectedScreens?.length
+    ? `EXACTLY ${preselectedScreens.length} screens matching the user-provided screens array. Preserve each id, name, role, and order.`
+    : "4 or 5 screens forming a connected flow";
   return `You are a senior mobile product designer. You define the shared design system for a mobile app.
 
 Return ONLY a JSON object (no prose, no code fences) with this shape:
@@ -69,7 +95,7 @@ Return ONLY a JSON object (no prose, no code fences) with this shape:
   "radius": "sm"|"md"|"lg"|"xl",
   "font": "Inter"|"SF Pro"|"Roboto"|"Space Grotesk",
   "designSystemCss": string,            // full CSS: :root vars, base reset, .screen, .nav-bar, .tab-bar, .btn, .card, typography
-  "screens": [ { "id": kebab, "name": string, "role": string } ]  // 4 or 5 screens forming a connected flow
+  "screens": [ { "id": kebab, "name": string, "role": string } ]  // ${screenInstruction}
 }
 
 designSystemCss requirements:
@@ -143,8 +169,12 @@ type Phase1 = {
   name: string;
   platform: "ios" | "android";
   palette: {
-    background: string; surface: string; text: string; muted: string;
-    accent: string; accentText: string;
+    background: string;
+    surface: string;
+    text: string;
+    muted: string;
+    accent: string;
+    accentText: string;
   };
   radius: "sm" | "md" | "lg" | "xl";
   font: string;
@@ -176,10 +206,10 @@ let SESSION = { calls: 0, input: 0, output: 0, total: 0 };
 // getGenerationModel) brought a single screen to ~45s. These caps are generous
 // upper bounds sized to the largest legitimate outputs we've observed.
 const MAX_TOKENS = {
-  plan: 6000,   // Phase-1 JSON: design system CSS + screen manifest
+  plan: 6000, // Phase-1 JSON: design system CSS + screen manifest
   screen: 8000, // one full HTML screen fragment
   refine: 8000, // an edited screen / element
-  theme: 6000,  // design-system JSON (palette + CSS)
+  theme: 6000, // design-system JSON (palette + CSS)
 } as const;
 
 // Hard wall-clock ceiling for any single model call, independent of the
@@ -197,7 +227,12 @@ type RunModelOpts = {
   abortSignal?: AbortSignal;
 };
 
-async function runModel(tuning: ModelTuning, system: string, prompt: string, opts: RunModelOpts = {}): Promise<{ text: string; usage: Usage }> {
+async function runModel(
+  tuning: ModelTuning,
+  system: string,
+  prompt: string,
+  opts: RunModelOpts = {},
+): Promise<{ text: string; usage: Usage }> {
   const { maxOutputTokens, retries = 3, abortSignal } = opts;
   let lastErr: unknown = null;
   for (let attempt = 0; attempt < retries; attempt++) {
@@ -215,10 +250,17 @@ async function runModel(tuning: ModelTuning, system: string, prompt: string, opt
         providerOptions: tuning.providerOptions,
       });
       const usage = readUsage(r.usage);
-      SESSION = { calls: SESSION.calls + 1, input: SESSION.input + usage.input, output: SESSION.output + usage.output, total: SESSION.total + usage.total };
+      SESSION = {
+        calls: SESSION.calls + 1,
+        input: SESSION.input + usage.input,
+        output: SESSION.output + usage.output,
+        total: SESSION.total + usage.total,
+      };
       // Log the RAW usage object too — surfaces any extra fields the provider
       // bills (reasoning/thinking tokens, cached input) that our totals might miss.
-      console.log(`[token-usage] call @ ${new Date().toISOString()} | in=${usage.input} out=${usage.output} total=${usage.total} | raw=${JSON.stringify(r.usage)} | SESSION calls=${SESSION.calls} in=${SESSION.input} out=${SESSION.output} total=${SESSION.total}`);
+      console.log(
+        `[token-usage] call @ ${new Date().toISOString()} | in=${usage.input} out=${usage.output} total=${usage.total} | raw=${JSON.stringify(r.usage)} | SESSION calls=${SESSION.calls} in=${SESSION.input} out=${SESSION.output} total=${SESSION.total}`,
+      );
       return { text: r.text, usage };
     } catch (err) {
       lastErr = err;
@@ -232,7 +274,8 @@ async function runModel(tuning: ModelTuning, system: string, prompt: string, opt
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
-type GenerationJobStatus = "queued" | "planning" | "generating" | "completed" | "failed" | "cancelled";
+type GenerationJobStatus =
+  "queued" | "planning" | "generating" | "completed" | "failed" | "cancelled";
 // Optional pre-selected screen manifest from the landing-page picker. When
 // present, the AI is instructed to use exactly these screens (in this order)
 // instead of inventing its own set in Phase 1.
@@ -254,6 +297,23 @@ type GenerationJob = {
   preselectedScreens?: PreselectedScreen[];
 };
 
+function normalizePreselectedScreens(screens: unknown): PreselectedScreen[] | undefined {
+  if (!Array.isArray(screens)) return undefined;
+  const normalized = screens
+    .map((screen) => {
+      if (!screen || typeof screen !== "object") return null;
+      const s = screen as Record<string, unknown>;
+      const id = typeof s.id === "string" ? s.id.trim() : "";
+      const name = typeof s.name === "string" ? s.name.trim() : "";
+      const role = typeof s.role === "string" ? s.role.trim() : "";
+      if (!id || !name || !role) return null;
+      return { id, name, role };
+    })
+    .filter((s): s is PreselectedScreen => s !== null)
+    .slice(0, 24);
+  return normalized.length ? normalized : undefined;
+}
+
 // In-memory job registry. NOTE: process-local — a multi-instance / multi-isolate
 // deployment needs this swapped for a shared store (KV / Durable Object / Redis)
 // so status polls land on the same state that started the job. Kept behind these
@@ -268,7 +328,8 @@ const JOB_MAX_AGE_MS = 30 * 60_000;
 function sweepJobs() {
   const now = Date.now();
   for (const [id, job] of generationJobs) {
-    const done = job.status === "completed" || job.status === "failed" || job.status === "cancelled";
+    const done =
+      job.status === "completed" || job.status === "failed" || job.status === "cancelled";
     if (done && now - job.updatedAt > JOB_DONE_TTL_MS) generationJobs.delete(id);
     else if (now - job.createdAt > JOB_MAX_AGE_MS) {
       job.abortController.abort();
@@ -297,9 +358,7 @@ function getGenerationModel(): ModelTuning {
     // options under the camelCase key "openaiCompatible".
     return {
       model: createOpenAiProvider(openAiKey, openAiBaseUrl)(openAiModel),
-      providerOptions: reasoningEffort
-        ? { openaiCompatible: { reasoningEffort } }
-        : undefined,
+      providerOptions: reasoningEffort ? { openaiCompatible: { reasoningEffort } } : undefined,
     };
   }
   return lovableKey
@@ -338,11 +397,15 @@ async function runGenerationJob(job: GenerationJob) {
     // the shared design system (palette, fonts, CSS) but must use exactly
     // these screens (ids/names/roles) in this order.
     const preselected = job.preselectedScreens;
-    const phase1Prompt = preselected && preselected.length
-      ? `App idea: ${job.idea}\nTarget platform: ${job.platform}\n\nThe user has pre-selected exactly ${preselected.length} screen(s). You MUST return EXACTLY this screens array (same ids, names, roles, same order) — do not add, remove, rename, or reorder:\n${JSON.stringify(preselected, null, 2)}`
-      : `App idea: ${job.idea}\nTarget platform: ${job.platform}`;
+    const phase1Prompt =
+      preselected && preselected.length
+        ? `App idea: ${job.idea}\nTarget platform: ${job.platform}\n\nThe user has pre-selected exactly ${preselected.length} screen(s). You MUST return EXACTLY this screens array (same ids, names, roles, same order) — do not add, remove, rename, or reorder:\n${JSON.stringify(preselected, null, 2)}`
+        : `App idea: ${job.idea}\nTarget platform: ${job.platform}`;
 
-    const p1res = await runModel(model, systemPhase1(preselected), phase1Prompt, { maxOutputTokens: MAX_TOKENS.plan, abortSignal: job.abortController.signal });
+    const p1res = await runModel(model, systemPhase1(preselected), phase1Prompt, {
+      maxOutputTokens: MAX_TOKENS.plan,
+      abortSignal: job.abortController.signal,
+    });
     if (job.abortController.signal.aborted) throw new Error("Generation cancelled");
     const plan = extractJson(p1res.text) as Phase1;
     if (!plan?.designSystemCss || !Array.isArray(plan.screens) || plan.screens.length === 0) {
@@ -371,7 +434,9 @@ async function runGenerationJob(job: GenerationJob) {
     // one as they land — rather than waiting for the whole batch. A shared
     // cursor hands work to SCREEN_CONCURRENCY workers.
     const others = plan.screens.map((x, idx) => `${idx + 1}. ${x.name} — ${x.role}`).join("\n");
-    const results: (Project["screens"][number] | null)[] = new Array(plan.screens.length).fill(null);
+    const results: (Project["screens"][number] | null)[] = new Array(plan.screens.length).fill(
+      null,
+    );
     let completed = 0;
     let cursor = 0;
 
@@ -382,7 +447,10 @@ async function runGenerationJob(job: GenerationJob) {
         if (job.abortController.signal.aborted) throw new Error("Generation cancelled");
         const screen = plan.screens[i];
         const prompt = `App: ${plan.name} (${plan.platform})\nIdea: ${job.idea}\n\nAll screens in this app:\n${others}\n\nGenerate screen #${i + 1}: "${screen.name}" (role: ${screen.role}, id: ${screen.id}).\n\nDesign system CSS you MUST use:\n${plan.designSystemCss}`;
-        const result = await runModel(model, systemPhase2(), prompt, { maxOutputTokens: MAX_TOKENS.screen, abortSignal: job.abortController.signal });
+        const result = await runModel(model, systemPhase2(), prompt, {
+          maxOutputTokens: MAX_TOKENS.screen,
+          abortSignal: job.abortController.signal,
+        });
         if (job.abortController.signal.aborted) throw new Error("Generation cancelled");
         results[i] = { ...screen, html: extractHtml(result.text) };
         completed++;
@@ -392,12 +460,17 @@ async function runGenerationJob(job: GenerationJob) {
         // order, so screens settle into final order as earlier ones land.
         const ready = results.filter((s): s is Project["screens"][number] => s !== null);
         project.screens = ready;
-        updateJob(job, { project: { ...project, screens: [...ready] }, currentScreenIndex: completed });
+        updateJob(job, {
+          project: { ...project, screens: [...ready] },
+          currentScreenIndex: completed,
+        });
         pushProgress(job, `${screen.name} ready. (${completed}/${plan.screens.length})`);
       }
     };
 
-    await Promise.all(Array.from({ length: Math.min(SCREEN_CONCURRENCY, plan.screens.length) }, worker));
+    await Promise.all(
+      Array.from({ length: Math.min(SCREEN_CONCURRENCY, plan.screens.length) }, worker),
+    );
 
     // Ensure every screen (including any that finished out of prefix order) is
     // present in final plan order.
@@ -423,7 +496,18 @@ export const Route = createFileRoute("/api/generate")({
     handlers: {
       POST: async ({ request }) => {
         const body = (await request.json()) as {
-          mode: "start-generation" | "generation-status" | "cancel-generation" | "design-system" | "website-design-system" | "extra-screen" | "generate" | "generate-plan" | "generate-screen" | "refine" | "refine-element";
+          mode:
+            | "start-generation"
+            | "generation-status"
+            | "cancel-generation"
+            | "design-system"
+            | "website-design-system"
+            | "extra-screen"
+            | "generate"
+            | "generate-plan"
+            | "generate-screen"
+            | "refine"
+            | "refine-element";
           jobId?: string;
           idea?: string;
           platform?: "ios" | "android";
@@ -435,15 +519,15 @@ export const Route = createFileRoute("/api/generate")({
           project?: Project;
           // refine payload
           instruction?: string;
-          screenHtml?: string;   // Lite mode single-screen refine
-          elementHtml?: string;  // website imports: element-scoped refine
+          screenHtml?: string; // Lite mode single-screen refine
+          elementHtml?: string; // website imports: element-scoped refine
           designSystemCss?: string;
-  websiteCss?: string;
-  projectContext?: { name: string; platform: string };
-  // Pre-selected screens manifest from the landing-page picker. Optional.
-  // When supplied (non-empty), Phase 1 uses these as a hard constraint.
-  screens?: PreselectedScreen[];
-};
+          websiteCss?: string;
+          projectContext?: { name: string; platform: string };
+          // Pre-selected screens manifest from the landing-page picker. Optional.
+          // When supplied (non-empty), Phase 1 uses these as a hard constraint.
+          screens?: PreselectedScreen[];
+        };
 
         try {
           if (body.mode === "start-generation") {
@@ -460,10 +544,7 @@ export const Route = createFileRoute("/api/generate")({
               updatedAt: Date.now(),
               // Only honor a non-empty, well-formed manifest. Empty/absent →
               // legacy behavior (AI decides the screen set in Phase 1).
-              preselectedScreens:
-                Array.isArray(body.screens) && body.screens.length > 0 && body.screens.every((s) => s && s.id && s.name && s.role)
-                  ? body.screens
-                  : undefined,
+              preselectedScreens: normalizePreselectedScreens(body.screens),
             };
             generationJobs.set(job.id, job);
             void runGenerationJob(job);
@@ -471,14 +552,16 @@ export const Route = createFileRoute("/api/generate")({
           }
 
           if (body.mode === "generation-status") {
-            if (!body.jobId) return Response.json({ error: "generation-status requires jobId" }, { status: 400 });
+            if (!body.jobId)
+              return Response.json({ error: "generation-status requires jobId" }, { status: 400 });
             const job = generationJobs.get(body.jobId);
             if (!job) return Response.json({ error: "Generation job not found" }, { status: 404 });
             return Response.json({ job: serializeJob(job) });
           }
 
           if (body.mode === "cancel-generation") {
-            if (!body.jobId) return Response.json({ error: "cancel-generation requires jobId" }, { status: 400 });
+            if (!body.jobId)
+              return Response.json({ error: "cancel-generation requires jobId" }, { status: 400 });
             const job = generationJobs.get(body.jobId);
             if (!job) return Response.json({ error: "Generation job not found" }, { status: 404 });
             job.abortController.abort();
@@ -490,31 +573,56 @@ export const Route = createFileRoute("/api/generate")({
           const model = getGenerationModel();
 
           if (body.mode === "design-system") {
-            if (!body.project) return Response.json({ error: "design-system requires project" }, { status: 400 });
-            const instruction = body.instruction?.trim() || (body.sourceUrl ? `Use ${body.sourceUrl} as a brand/style reference and reinterpret that visual direction for this app.` : "Improve this design system");
+            if (!body.project)
+              return Response.json({ error: "design-system requires project" }, { status: 400 });
+            const instruction =
+              body.instruction?.trim() ||
+              (body.sourceUrl
+                ? `Use ${body.sourceUrl} as a brand/style reference and reinterpret that visual direction for this app.`
+                : "Improve this design system");
             // Compact the current CSS (strip comments/whitespace, cap length) so a
             // large design system can't inflate the prompt — same treatment the
             // website-design-system path already applies.
             const currentCss = compactCssForTheme(body.project.designSystemCss ?? "");
             const prompt = `Instruction: ${instruction}\n\nReference URL, if any: ${body.sourceUrl ?? "none"}\nImportant: Do not clone, scrape, or copy CSS from the reference URL. Infer the likely brand direction, mood, color/typography language, and interaction feel, then create an original app design system inspired by it.\n\nCurrent app idea: ${body.project.idea}\nCurrent project name: ${body.project.name}\nCurrent platform: ${body.project.platform}\nCurrent design system JSON:\n${JSON.stringify(body.project.designSystem)}\n\nCurrent designSystemCss:\n${currentCss}\n\nReturn the updated design system only.`;
-            const result = await runModel(model, systemDesignFromInstruction(), prompt, { maxOutputTokens: MAX_TOKENS.theme, abortSignal: request.signal });
+            const result = await runModel(model, systemDesignFromInstruction(), prompt, {
+              maxOutputTokens: MAX_TOKENS.theme,
+              abortSignal: request.signal,
+            });
             const next = extractJson(result.text) as {
               palette: Project["designSystem"]["palette"];
               radius: Project["designSystem"]["radius"];
               font: Project["designSystem"]["font"];
               designSystemCss: string;
             };
-            if (!next?.palette || !next?.designSystemCss) return Response.json({ error: "Design system output invalid" }, { status: 502 });
-            return Response.json({ designSystem: { palette: next.palette, radius: next.radius, font: next.font }, designSystemCss: next.designSystemCss });
+            if (!next?.palette || !next?.designSystemCss)
+              return Response.json({ error: "Design system output invalid" }, { status: 502 });
+            return Response.json({
+              designSystem: { palette: next.palette, radius: next.radius, font: next.font },
+              designSystemCss: next.designSystemCss,
+            });
           }
 
           if (body.mode === "website-design-system") {
-            if (!body.project) return Response.json({ error: "website-design-system requires project" }, { status: 400 });
-            const instruction = body.instruction?.trim() || (body.sourceUrl ? `Use ${body.sourceUrl} as a brand/style reference and reinterpret that visual direction for this website.` : "Improve this website design system");
+            if (!body.project)
+              return Response.json(
+                { error: "website-design-system requires project" },
+                { status: 400 },
+              );
+            const instruction =
+              body.instruction?.trim() ||
+              (body.sourceUrl
+                ? `Use ${body.sourceUrl} as a brand/style reference and reinterpret that visual direction for this website.`
+                : "Improve this website design system");
             const rawCss = body.websiteCss ?? body.project.designSystemCss ?? "";
             const currentCss = compactCssForTheme(rawCss);
-            const selectedHtml = (body.screenHtml ?? "").replace(/\s+/g, " ").trim().slice(0, 12_000);
-            console.log(`[ai-theme] website-design-system project=${body.project.id} cssChars=${rawCss.length} compactCssChars=${currentCss.length} htmlChars=${selectedHtml.length} sourceUrl=${body.sourceUrl ? "yes" : "no"}`);
+            const selectedHtml = (body.screenHtml ?? "")
+              .replace(/\s+/g, " ")
+              .trim()
+              .slice(0, 12_000);
+            console.log(
+              `[ai-theme] website-design-system project=${body.project.id} cssChars=${rawCss.length} compactCssChars=${currentCss.length} htmlChars=${selectedHtml.length} sourceUrl=${body.sourceUrl ? "yes" : "no"}`,
+            );
             const prompt = `Instruction: ${instruction}
 
 Reference URL, if any: ${body.sourceUrl ?? "none"}
@@ -533,59 +641,121 @@ Current captured CSS to restyle and return as a full replacement:
 ${currentCss}
 
 Return the updated website design system only.`;
-            const result = await runModel(model, systemWebsiteDesignFromInstruction(), prompt, { maxOutputTokens: MAX_TOKENS.theme, abortSignal: request.signal });
+            const result = await runModel(model, systemWebsiteDesignFromInstruction(), prompt, {
+              maxOutputTokens: MAX_TOKENS.theme,
+              abortSignal: request.signal,
+            });
             const next = extractJson(result.text) as {
               palette: Project["designSystem"]["palette"];
               radius: Project["designSystem"]["radius"];
               font: Project["designSystem"]["font"];
               designSystemCss: string;
             };
-            if (!next?.palette || !next?.designSystemCss) return Response.json({ error: "Website design system output invalid" }, { status: 502 });
-            return Response.json({ designSystem: { palette: next.palette, radius: next.radius, font: next.font }, designSystemCss: next.designSystemCss });
+            if (!next?.palette || !next?.designSystemCss)
+              return Response.json(
+                { error: "Website design system output invalid" },
+                { status: 502 },
+              );
+            return Response.json({
+              designSystem: { palette: next.palette, radius: next.radius, font: next.font },
+              designSystemCss: next.designSystemCss,
+            });
           }
 
           if (body.mode === "extra-screen") {
-            if (!body.project) return Response.json({ error: "extra-screen requires project" }, { status: 400 });
+            if (!body.project)
+              return Response.json({ error: "extra-screen requires project" }, { status: 400 });
             const name = body.screenName?.trim() || "New Screen";
-            const id = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || crypto.randomUUID();
+            const id =
+              name
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/^-|-$/g, "") || crypto.randomUUID();
             // Only a few example screens are needed for consistency; capping the
             // count (and each excerpt) keeps this prompt bounded regardless of how
             // large the project grows.
-            const existing = body.project.screens.slice(0, 4).map((screen, idx) => `${idx + 1}. ${screen.name}: ${screen.html.slice(0, 1000)}`).join("\n\n");
+            const existing = body.project.screens
+              .slice(0, 4)
+              .map((screen, idx) => `${idx + 1}. ${screen.name}: ${screen.html.slice(0, 1000)}`)
+              .join("\n\n");
             const prompt = `App: ${body.project.name} (${body.project.platform})\nIdea: ${body.project.idea}\n\nNew screen name: ${name}\nPurpose: ${body.purpose?.trim() || "Match the product flow and fill an obvious missing screen."}\nScreen id: ${id}\n\nExisting screens for consistency:\n${existing}\n\nShared design system CSS you MUST use:\n${body.project.designSystemCss}`;
-            const result = await runModel(model, systemExtraScreen(), prompt, { maxOutputTokens: MAX_TOKENS.screen, abortSignal: request.signal });
-            return Response.json({ screen: { id, name, role: body.purpose?.trim() || name, html: extractHtml(result.text) } });
+            const result = await runModel(model, systemExtraScreen(), prompt, {
+              maxOutputTokens: MAX_TOKENS.screen,
+              abortSignal: request.signal,
+            });
+            return Response.json({
+              screen: {
+                id,
+                name,
+                role: body.purpose?.trim() || name,
+                html: extractHtml(result.text),
+              },
+            });
           }
 
           if (body.mode === "generate-plan") {
             const idea = body.idea?.trim() || "A modern mobile app";
             const platform = body.platform ?? "ios";
-            const p1res = await runModel(model, systemPhase1(), `App idea: ${idea}\nTarget platform: ${platform}`, { maxOutputTokens: MAX_TOKENS.plan, abortSignal: request.signal });
+            const preselected = normalizePreselectedScreens(body.screens);
+            const phase1Prompt = preselected?.length
+              ? `App idea: ${idea}\nTarget platform: ${platform}\n\nThe user has pre-selected exactly ${preselected.length} screen(s). You MUST return EXACTLY this screens array (same ids, names, roles, same order) - do not add, remove, rename, or reorder:\n${JSON.stringify(preselected, null, 2)}`
+              : `App idea: ${idea}\nTarget platform: ${platform}`;
+            const p1res = await runModel(model, systemPhase1(preselected), phase1Prompt, {
+              maxOutputTokens: MAX_TOKENS.plan,
+              abortSignal: request.signal,
+            });
             const plan = extractJson(p1res.text) as Phase1;
-            if (!plan?.designSystemCss || !Array.isArray(plan.screens) || plan.screens.length === 0) {
-              return Response.json({ error: "Planning output invalid", raw: p1res.text.slice(0, 500) }, { status: 502 });
+            if (
+              !plan?.designSystemCss ||
+              !Array.isArray(plan.screens) ||
+              plan.screens.length === 0
+            ) {
+              return Response.json(
+                { error: "Planning output invalid", raw: p1res.text.slice(0, 500) },
+                { status: 502 },
+              );
             }
-            return Response.json({ plan, usage: { mode: "generate-plan", calls: 1, ...p1res.usage } });
+            if (preselected?.length)
+              plan.screens = preselected.map((s) => ({ id: s.id, name: s.name, role: s.role }));
+            return Response.json({
+              plan,
+              usage: { mode: "generate-plan", calls: 1, ...p1res.usage },
+            });
           }
 
           if (body.mode === "generate-screen") {
             if (!body.plan || typeof body.screenIndex !== "number") {
-              return Response.json({ error: "generate-screen requires plan + screenIndex" }, { status: 400 });
+              return Response.json(
+                { error: "generate-screen requires plan + screenIndex" },
+                { status: 400 },
+              );
             }
             const screen = body.plan.screens[body.screenIndex];
-            if (!screen) return Response.json({ error: "Screen index is out of range" }, { status: 400 });
+            if (!screen)
+              return Response.json({ error: "Screen index is out of range" }, { status: 400 });
             const idea = body.idea?.trim() || "A modern mobile app";
-            const others = body.plan.screens.map((x, idx) => `${idx + 1}. ${x.name} — ${x.role}`).join("\n");
+            const others = body.plan.screens
+              .map((x, idx) => `${idx + 1}. ${x.name} — ${x.role}`)
+              .join("\n");
             const prompt = `App: ${body.plan.name} (${body.plan.platform})\nIdea: ${idea}\n\nAll screens in this app:\n${others}\n\nGenerate screen #${body.screenIndex + 1}: "${screen.name}" (role: ${screen.role}, id: ${screen.id}).\n\nDesign system CSS you MUST use:\n${body.plan.designSystemCss}`;
-            const result = await runModel(model, systemPhase2(), prompt, { maxOutputTokens: MAX_TOKENS.screen, abortSignal: request.signal });
-            return Response.json({ screen: { ...screen, html: extractHtml(result.text) }, usage: { mode: "generate-screen", calls: 1, ...result.usage } });
+            const result = await runModel(model, systemPhase2(), prompt, {
+              maxOutputTokens: MAX_TOKENS.screen,
+              abortSignal: request.signal,
+            });
+            return Response.json({
+              screen: { ...screen, html: extractHtml(result.text) },
+              usage: { mode: "generate-screen", calls: 1, ...result.usage },
+            });
           }
 
           // Website imports: the full page is far too large for a model call,
           // so AI edits are scoped to one selected element.
           if (body.mode === "refine-element") {
             if (!body.elementHtml || !body.instruction) {
-              return Response.json({ error: "refine-element requires elementHtml + instruction" }, { status: 400 });
+              return Response.json(
+                { error: "refine-element requires elementHtml + instruction" },
+                { status: 400 },
+              );
             }
             const system = `You edit ONE HTML element from a captured web page. Return ONLY the updated element's HTML (no JSON, no code fences, no prose).
 Rules:
@@ -593,44 +763,90 @@ Rules:
 - Make ONLY the change the user asked for; keep all other attributes, classes, inline styles and children as-is.
 - Do not add <script>, <iframe>, <form> or external resources.`;
             const prompt = `Page: ${body.projectContext?.name ?? ""}\n\nInstruction:\n${body.instruction}\n\nElement HTML:\n${body.elementHtml}`;
-            const { text, usage } = await runModel(model, system, prompt, { maxOutputTokens: MAX_TOKENS.refine, abortSignal: request.signal });
-            console.log(`[token-usage] refine-element | input=${usage.input} output=${usage.output} total=${usage.total}`);
-            return Response.json({ html: extractHtml(text), usage: { mode: "refine-element", calls: 1, ...usage } });
+            const { text, usage } = await runModel(model, system, prompt, {
+              maxOutputTokens: MAX_TOKENS.refine,
+              abortSignal: request.signal,
+            });
+            console.log(
+              `[token-usage] refine-element | input=${usage.input} output=${usage.output} total=${usage.total}`,
+            );
+            return Response.json({
+              html: extractHtml(text),
+              usage: { mode: "refine-element", calls: 1, ...usage },
+            });
           }
 
           if (body.mode === "refine") {
             if (!body.screenHtml || !body.instruction) {
-              return Response.json({ error: "refine requires screenHtml + instruction" }, { status: 400 });
+              return Response.json(
+                { error: "refine requires screenHtml + instruction" },
+                { status: 400 },
+              );
             }
             const system = `You edit ONE mobile app screen represented as an HTML fragment. Return ONLY the updated HTML fragment (no JSON, no code fences, no prose).
 Preserve the outer <div class="screen" data-screen-id="..."> wrapper.
 Keep using the provided design-system CSS variables/classes; do not redefine tokens.
 Make ONLY the change the user asked for; leave the rest as-is.`;
             const prompt = `Design system CSS (context, do not modify):\n${body.designSystemCss ?? ""}\n\nApp: ${body.projectContext?.name ?? ""} (${body.projectContext?.platform ?? "ios"})\n\nInstruction:\n${body.instruction}\n\nCurrent screen HTML:\n${body.screenHtml}`;
-            const { text, usage } = await runModel(model, system, prompt, { maxOutputTokens: MAX_TOKENS.refine, abortSignal: request.signal });
-            console.log(`[token-usage] refine  | input=${usage.input} output=${usage.output} total=${usage.total}`);
-            return Response.json({ html: extractHtml(text), usage: { mode: "refine", calls: 1, ...usage } });
+            const { text, usage } = await runModel(model, system, prompt, {
+              maxOutputTokens: MAX_TOKENS.refine,
+              abortSignal: request.signal,
+            });
+            console.log(
+              `[token-usage] refine  | input=${usage.input} output=${usage.output} total=${usage.total}`,
+            );
+            return Response.json({
+              html: extractHtml(text),
+              usage: { mode: "refine", calls: 1, ...usage },
+            });
           }
 
           // generate
           const idea = body.idea?.trim() || "A modern mobile app";
           const platform = body.platform ?? "ios";
+          const preselected = normalizePreselectedScreens(body.screens);
 
           // Phase 1: shared design system + screen manifest
-          const p1res = await runModel(model, systemPhase1(), `App idea: ${idea}\nTarget platform: ${platform}`, { maxOutputTokens: MAX_TOKENS.plan, abortSignal: request.signal });
+          const phase1Prompt = preselected?.length
+            ? `App idea: ${idea}\nTarget platform: ${platform}\n\nThe user has pre-selected exactly ${preselected.length} screen(s). You MUST return EXACTLY this screens array (same ids, names, roles, same order) - do not add, remove, rename, or reorder:\n${JSON.stringify(preselected, null, 2)}`
+            : `App idea: ${idea}\nTarget platform: ${platform}`;
+          const p1res = await runModel(model, systemPhase1(preselected), phase1Prompt, {
+            maxOutputTokens: MAX_TOKENS.plan,
+            abortSignal: request.signal,
+          });
           const p1raw = p1res.text;
           const p1 = extractJson(p1raw) as Phase1;
           if (!p1?.designSystemCss || !Array.isArray(p1.screens) || p1.screens.length === 0) {
-            return Response.json({ error: "Phase 1 output invalid", raw: p1raw.slice(0, 500) }, { status: 502 });
+            return Response.json(
+              { error: "Phase 1 output invalid", raw: p1raw.slice(0, 500) },
+              { status: 502 },
+            );
           }
+          if (preselected?.length)
+            p1.screens = preselected.map((s) => ({ id: s.id, name: s.name, role: s.role }));
 
           // Phase 2: per-screen HTML, actually in parallel (bounded concurrency).
-          const p2others = p1.screens.map((x, idx) => `${idx + 1}. ${x.name} — ${x.role}`).join("\n");
-          const screensRaw = await mapWithConcurrency(p1.screens, SCREEN_CONCURRENCY, async (s, i) => {
-            const prompt = `App: ${p1.name} (${p1.platform})\nIdea: ${idea}\n\nAll screens in this app:\n${p2others}\n\nGenerate screen #${i + 1}: "${s.name}" (role: ${s.role}, id: ${s.id}).\n\nDesign system CSS you MUST use:\n${p1.designSystemCss}`;
-            const r2 = await runModel(model, systemPhase2(), prompt, { maxOutputTokens: MAX_TOKENS.screen, abortSignal: request.signal });
-            return { id: s.id, name: s.name, role: s.role, html: extractHtml(r2.text), usage: r2.usage };
-          });
+          const p2others = p1.screens
+            .map((x, idx) => `${idx + 1}. ${x.name} — ${x.role}`)
+            .join("\n");
+          const screensRaw = await mapWithConcurrency(
+            p1.screens,
+            SCREEN_CONCURRENCY,
+            async (s, i) => {
+              const prompt = `App: ${p1.name} (${p1.platform})\nIdea: ${idea}\n\nAll screens in this app:\n${p2others}\n\nGenerate screen #${i + 1}: "${s.name}" (role: ${s.role}, id: ${s.id}).\n\nDesign system CSS you MUST use:\n${p1.designSystemCss}`;
+              const r2 = await runModel(model, systemPhase2(), prompt, {
+                maxOutputTokens: MAX_TOKENS.screen,
+                abortSignal: request.signal,
+              });
+              return {
+                id: s.id,
+                name: s.name,
+                role: s.role,
+                html: extractHtml(r2.text),
+                usage: r2.usage,
+              };
+            },
+          );
           const screensOut = screensRaw.map(({ usage: _u, ...s }) => s);
 
           // Aggregate token usage: phase 1 + every phase-2 screen call.
@@ -646,7 +862,7 @@ Make ONLY the change the user asked for; leave the rest as-is.`;
           };
           console.log(
             `[token-usage] generate | screens=${screensRaw.length} calls=${usageReport.calls} ` +
-            `phase1(total=${p1res.usage.total}) phase2(total=${phase2Usage.total}) => GRAND TOTAL input=${totalUsage.input} output=${totalUsage.output} total=${totalUsage.total}`,
+              `phase1(total=${p1res.usage.total}) phase2(total=${phase2Usage.total}) => GRAND TOTAL input=${totalUsage.input} output=${totalUsage.output} total=${totalUsage.total}`,
           );
 
           const project: Project = {
@@ -666,7 +882,10 @@ Make ONLY the change the user asked for; leave the rest as-is.`;
           const parsed = ProjectSchema.safeParse(project);
           if (!parsed.success) {
             console.error("Project validation failed", parsed.error.flatten());
-            return Response.json({ error: "Model output failed validation", details: parsed.error.flatten() }, { status: 502 });
+            return Response.json(
+              { error: "Model output failed validation", details: parsed.error.flatten() },
+              { status: 502 },
+            );
           }
           return Response.json({ project: parsed.data, usage: usageReport });
         } catch (err) {

@@ -207,7 +207,13 @@ function decodeShare(s: string): Project | null {
 }
 
 function Workspace() {
-  const { idea, platform: platformParam, share, project: projectIdParam, screens: screensParam } = Route.useSearch();
+  const {
+    idea,
+    platform: platformParam,
+    share,
+    project: projectIdParam,
+    screens: screensParam,
+  } = Route.useSearch();
   const navigate = useNavigate();
   const [project, setProject] = useState<Project | null>(null);
   const [status, setStatus] = useState<"idle" | "generating" | "refining">("idle");
@@ -302,107 +308,113 @@ function Workspace() {
   }, [editorHtml, project, selectedId]);
 
   // ---- generation ----------------------------------------------------------
-  const generate = useCallback(async (
-    ideaText: string,
-    plat: "ios" | "android",
-    preselectedScreens?: { id: string; name: string; role: string }[],
-  ) => {
-    setStatus("generating");
-    setChat([
-      {
-        role: "assistant",
-        text: `Starting a ${plat === "ios" ? "iOS" : "Android"} generation job for: "${ideaText}"...`,
-      },
-    ]);
-    try {
-      const startRes = await fetchAi("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: "start-generation",
-          idea: ideaText,
-          platform: plat,
-          ...(preselectedScreens && preselectedScreens.length ? { screens: preselectedScreens } : {}),
-        }),
-      });
-
-      if (!startRes.ok) throw new Error((await startRes.text()) || `HTTP ${startRes.status}`);
-      const { jobId } = (await startRes.json()) as { jobId: string };
-      let seenProgress = 0;
-      let lastScreenCount = 0;
-      // Cache ensureIds() output per raw html so a finished screen is parsed +
-      // sanitized ONCE, not re-parsed on every poll tick for the rest of the job.
-      const idCache = new Map<string, string>();
-      // Signature of the last screen set we pushed to React/localStorage, so we
-      // skip setProject()/saveProject() on ticks where nothing changed (the
-      // common case: most polls return the same in-progress project).
-      let lastScreensSig = "";
-
-      navigate({ to: "/workspace", search: {}, replace: true });
-
-      while (true) {
-        await new Promise((resolve) => setTimeout(resolve, 1200));
-        const statusRes = await fetchAi("/api/generate", {
+  const generate = useCallback(
+    async (
+      ideaText: string,
+      plat: "ios" | "android",
+      preselectedScreens?: { id: string; name: string; role: string }[],
+    ) => {
+      setStatus("generating");
+      setChat([
+        {
+          role: "assistant",
+          text: `Starting a ${plat === "ios" ? "iOS" : "Android"} generation job for: "${ideaText}"...`,
+        },
+      ]);
+      try {
+        const startRes = await fetchAi("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: "generation-status", jobId }),
+          body: JSON.stringify({
+            mode: "start-generation",
+            idea: ideaText,
+            platform: plat,
+            ...(preselectedScreens && preselectedScreens.length
+              ? { screens: preselectedScreens }
+              : {}),
+          }),
         });
 
-        if (!statusRes.ok) throw new Error((await statusRes.text()) || `HTTP ${statusRes.status}`);
-        const { job } = (await statusRes.json()) as { job: GenerationJob };
+        if (!startRes.ok) throw new Error((await startRes.text()) || `HTTP ${startRes.status}`);
+        const { jobId } = (await startRes.json()) as { jobId: string };
+        let seenProgress = 0;
+        let lastScreenCount = 0;
+        // Cache ensureIds() output per raw html so a finished screen is parsed +
+        // sanitized ONCE, not re-parsed on every poll tick for the rest of the job.
+        const idCache = new Map<string, string>();
+        // Signature of the last screen set we pushed to React/localStorage, so we
+        // skip setProject()/saveProject() on ticks where nothing changed (the
+        // common case: most polls return the same in-progress project).
+        let lastScreensSig = "";
 
-        const newProgress = job.progress.slice(seenProgress);
-        if (newProgress.length) {
-          seenProgress = job.progress.length;
-          setChat((c) => [
-            ...c,
-            ...newProgress.map((text) => ({ role: "assistant" as const, text })),
-          ]);
-        }
+        navigate({ to: "/workspace", search: {}, replace: true });
 
-        if (job.project) {
-          // Cheap change check first — only touch React state + localStorage when
-          // the actual screen payloads changed since the last tick.
-          const sig = `${job.project.screens.length}:${job.project.screens.map((s) => s.html.length).join(",")}`;
-          if (sig !== lastScreensSig) {
-            lastScreensSig = sig;
-            const screens = job.project.screens.map((screen) => {
-              let html = idCache.get(screen.html);
-              if (html === undefined) {
-                html = ensureIds(screen.html);
-                idCache.set(screen.html, html);
+        while (true) {
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+          const statusRes = await fetchAi("/api/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: "generation-status", jobId }),
+          });
+
+          if (!statusRes.ok)
+            throw new Error((await statusRes.text()) || `HTTP ${statusRes.status}`);
+          const { job } = (await statusRes.json()) as { job: GenerationJob };
+
+          const newProgress = job.progress.slice(seenProgress);
+          if (newProgress.length) {
+            seenProgress = job.progress.length;
+            setChat((c) => [
+              ...c,
+              ...newProgress.map((text) => ({ role: "assistant" as const, text })),
+            ]);
+          }
+
+          if (job.project) {
+            // Cheap change check first — only touch React state + localStorage when
+            // the actual screen payloads changed since the last tick.
+            const sig = `${job.project.screens.length}:${job.project.screens.map((s) => s.html.length).join(",")}`;
+            if (sig !== lastScreensSig) {
+              lastScreensSig = sig;
+              const screens = job.project.screens.map((screen) => {
+                let html = idCache.get(screen.html);
+                if (html === undefined) {
+                  html = ensureIds(screen.html);
+                  idCache.set(screen.html, html);
+                }
+                return { ...screen, html };
+              });
+              const projectSnapshot = normalizeProject({ ...job.project, screens } as Project)!;
+              setProject(projectSnapshot);
+              saveProject(projectSnapshot);
+              if (screens.length > lastScreenCount) {
+                setSelectedId((current) => current ?? screens[0]?.id ?? null);
+                lastScreenCount = screens.length;
+                lastLoadedRef.current = null;
               }
-              return { ...screen, html };
-            });
-            const projectSnapshot = normalizeProject({ ...job.project, screens } as Project)!;
-            setProject(projectSnapshot);
-            saveProject(projectSnapshot);
-            if (screens.length > lastScreenCount) {
-              setSelectedId((current) => current ?? screens[0]?.id ?? null);
-              lastScreenCount = screens.length;
-              lastLoadedRef.current = null;
             }
+          }
+
+          if (job.status === "completed") break;
+          if (job.status === "failed" || job.status === "cancelled") {
+            throw new Error(job.error || `Generation ${job.status}`);
           }
         }
 
-        if (job.status === "completed") break;
-        if (job.status === "failed" || job.status === "cancelled") {
-          throw new Error(job.error || `Generation ${job.status}`);
-        }
+        setChat((c) => [
+          ...c,
+          { role: "assistant", text: "Generation complete. You can edit the app now." },
+        ]);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error(`Generation failed: ${message}`);
+        setChat((c) => [...c, { role: "assistant", text: `Generation failed: ${message}` }]);
+      } finally {
+        setStatus("idle");
       }
-
-      setChat((c) => [
-        ...c,
-        { role: "assistant", text: "Generation complete. You can edit the app now." },
-      ]);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Generation failed: ${message}`);
-      setChat((c) => [...c, { role: "assistant", text: `Generation failed: ${message}` }]);
-    } finally {
-      setStatus("idle");
-    }
-  }, []);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (bootstrapped.current) return;
@@ -1506,7 +1518,8 @@ function LiteCanvas({
                 }
                 frameHeight={
                   (project as any)?.format_config?.artifactType === "figma"
-                    ? (((project as any)?.format_config?.frame?.height as number | undefined) ?? null)
+                    ? (((project as any)?.format_config?.frame?.height as number | undefined) ??
+                      null)
                     : null
                 }
               />
