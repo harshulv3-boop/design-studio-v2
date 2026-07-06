@@ -17,7 +17,7 @@
     },
     {
       "name": "Install Chromium for Playwright",
-      "command": "pnpm exec --dir url-to-code playwright install chromium"
+      "command": "pnpm --dir url-to-code --filter @workspace/api-server exec playwright install chromium"
     }
   ],
   "codeChecks": [
