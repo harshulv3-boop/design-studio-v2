@@ -1,0 +1,82 @@
+{
+  "systemSetup": [
+    {
+      "name": "Install pnpm",
+      "command": "npm i -g pnpm"
+    }
+  ],
+  "templateName": "custom",
+  "projectDependencies": [
+    {
+      "name": "Install Studio Dependencies",
+      "command": "npm install --prefix app-design-studio"
+    },
+    {
+      "name": "Install Engine Dependencies",
+      "command": "pnpm install --dir url-to-code"
+    },
+    {
+      "name": "Install Chromium for Playwright",
+      "command": "pnpm exec --dir url-to-code playwright install chromium"
+    }
+  ],
+  "codeChecks": [
+    {
+      "name": "Lint Studio",
+      "command": "npm run lint --prefix app-design-studio"
+    },
+    {
+      "name": "Typecheck Engine",
+      "command": "pnpm run typecheck --dir url-to-code"
+    }
+  ],
+  "buildSteps": [
+    {
+      "name": "Build Engine API Server",
+      "command": "pnpm --dir url-to-code --filter @workspace/api-server run build"
+    },
+    {
+      "name": "Build Studio",
+      "command": "npm run build --prefix app-design-studio"
+    }
+  ],
+  "runStep": [
+    {
+      "name": "Run Clone Engine",
+      "command": "PORT=8081 node url-to-code/artifacts/api-server/dist/index.mjs",
+      "port": "8081"
+    },
+    {
+      "name": "Run Design Studio",
+      "command": "npm run dev --prefix app-design-studio -- --host --port 8080",
+      "port": "8080"
+    }
+  ],
+  "deploySteps": [],
+  "cleanupFiles": [
+    "app-design-studio/node_modules",
+    "app-design-studio/dist",
+    "app-design-studio/.output",
+    "app-design-studio/.vite",
+    "url-to-code/node_modules",
+    "url-to-code/artifacts/api-server/dist",
+    "url-to-code/artifacts/api-server/node_modules",
+    "url-to-code/artifacts/site-cloner/node_modules",
+    "url-to-code/artifacts/mockup-sandbox/node_modules",
+    "url-to-code/lib/db/node_modules",
+    "url-to-code/lib/api-client-react/node_modules",
+    "url-to-code/lib/api-zod/node_modules",
+    "url-to-code/lib/api-spec/node_modules"
+  ],
+  "packageManager": "npm",
+  "envPaths": [
+    {
+      "name": "studio",
+      "path": "app-design-studio/.env"
+    },
+    {
+      "name": "engine",
+      "path": "url-to-code/.env"
+    }
+  ]
+}
