@@ -81,9 +81,9 @@ function compactCssForTheme(css: string, maxChars = 40_000): string {
   return prioritized || cleaned.slice(0, maxChars);
 }
 
-function systemPhase1(preselectedScreens?: PreselectedScreen[]) {
-  const screenInstruction = preselectedScreens?.length
-    ? `EXACTLY ${preselectedScreens.length} screens matching the user-provided screens array. Preserve each id, name, role, and order.`
+function systemPhase1(screenCount?: number) {
+  const screenInstruction = screenCount
+    ? `EXACTLY ${screenCount} screens forming a connected flow`
     : "4 or 5 screens forming a connected flow";
   return `You are a senior mobile product designer. You define the shared design system for a mobile app.
 
@@ -276,10 +276,6 @@ async function runModel(
 
 type GenerationJobStatus =
   "queued" | "planning" | "generating" | "completed" | "failed" | "cancelled";
-// Optional pre-selected screen manifest from the landing-page picker. When
-// present, the AI is instructed to use exactly these screens (in this order)
-// instead of inventing its own set in Phase 1.
-type PreselectedScreen = { id: string; name: string; role: string };
 type GenerationJob = {
   id: string;
   idea: string;
@@ -292,26 +288,42 @@ type GenerationJob = {
   abortController: AbortController;
   createdAt: number;
   updatedAt: number;
-  // Undefined → AI decides the screen set (legacy behavior).
-  // Non-empty array → used as a hard constraint on Phase 1's screen manifest.
-  preselectedScreens?: PreselectedScreen[];
+  screenCount?: number;
 };
 
-function normalizePreselectedScreens(screens: unknown): PreselectedScreen[] | undefined {
-  if (!Array.isArray(screens)) return undefined;
-  const normalized = screens
-    .map((screen) => {
-      if (!screen || typeof screen !== "object") return null;
-      const s = screen as Record<string, unknown>;
-      const id = typeof s.id === "string" ? s.id.trim() : "";
-      const name = typeof s.name === "string" ? s.name.trim() : "";
-      const role = typeof s.role === "string" ? s.role.trim() : "";
-      if (!id || !name || !role) return null;
-      return { id, name, role };
-    })
-    .filter((s): s is PreselectedScreen => s !== null)
-    .slice(0, 24);
-  return normalized.length ? normalized : undefined;
+function normalizeScreenCount(value: unknown): number | undefined {
+  if (value === "auto" || value === undefined || value === null) return undefined;
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isFinite(n)) return undefined;
+  return Math.max(1, Math.min(24, Math.round(n)));
+}
+
+function coercePlanScreensToCount(screens: Phase1["screens"], count?: number): Phase1["screens"] {
+  if (!count || screens.length === count) return screens;
+  const out = screens.slice(0, count);
+  const fallback = [
+    "Home",
+    "Dashboard",
+    "Explore",
+    "Details",
+    "Profile",
+    "Settings",
+    "Notifications",
+    "Analytics",
+    "Search",
+    "Inbox",
+    "Activity",
+    "Summary",
+  ];
+  while (out.length < count) {
+    const name = fallback[out.length] ?? `Screen ${out.length + 1}`;
+    const id = name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+    out.push({ id, name, role: id || `screen-${out.length + 1}` });
+  }
+  return out;
 }
 
 // In-memory job registry. NOTE: process-local — a multi-instance / multi-isolate
@@ -392,17 +404,13 @@ async function runGenerationJob(job: GenerationJob) {
     updateJob(job, { status: "planning" });
     pushProgress(job, "Creating navigation and design system...");
 
-    // Build the Phase 1 prompt. When the user pre-selected screens on the
-    // landing page, pass them as a hard constraint: the model still designs
-    // the shared design system (palette, fonts, CSS) but must use exactly
-    // these screens (ids/names/roles) in this order.
-    const preselected = job.preselectedScreens;
+    const screenCount = job.screenCount;
     const phase1Prompt =
-      preselected && preselected.length
-        ? `App idea: ${job.idea}\nTarget platform: ${job.platform}\n\nThe user has pre-selected exactly ${preselected.length} screen(s). You MUST return EXACTLY this screens array (same ids, names, roles, same order) — do not add, remove, rename, or reorder:\n${JSON.stringify(preselected, null, 2)}`
+      screenCount !== undefined
+        ? `App idea: ${job.idea}\nTarget platform: ${job.platform}\n\nThe user selected exactly ${screenCount} screen(s). Return exactly ${screenCount} screens. Choose the best screen types for the app idea.`
         : `App idea: ${job.idea}\nTarget platform: ${job.platform}`;
 
-    const p1res = await runModel(model, systemPhase1(preselected), phase1Prompt, {
+    const p1res = await runModel(model, systemPhase1(screenCount), phase1Prompt, {
       maxOutputTokens: MAX_TOKENS.plan,
       abortSignal: job.abortController.signal,
     });
@@ -411,11 +419,7 @@ async function runGenerationJob(job: GenerationJob) {
     if (!plan?.designSystemCss || !Array.isArray(plan.screens) || plan.screens.length === 0) {
       throw new Error("Planning output invalid");
     }
-    // Force the screen manifest to the user's pre-selection regardless of what
-    // the model returned — guarantees count and types match the picker.
-    if (preselected && preselected.length) {
-      plan.screens = preselected.map((s) => ({ id: s.id, name: s.name, role: s.role }));
-    }
+    plan.screens = coercePlanScreensToCount(plan.screens, screenCount);
 
     const project: Project = {
       id: crypto.randomUUID(),
@@ -524,9 +528,7 @@ export const Route = createFileRoute("/api/generate")({
           designSystemCss?: string;
           websiteCss?: string;
           projectContext?: { name: string; platform: string };
-          // Pre-selected screens manifest from the landing-page picker. Optional.
-          // When supplied (non-empty), Phase 1 uses these as a hard constraint.
-          screens?: PreselectedScreen[];
+          screenCount?: number | "auto";
         };
 
         try {
@@ -542,9 +544,7 @@ export const Route = createFileRoute("/api/generate")({
               abortController: new AbortController(),
               createdAt: Date.now(),
               updatedAt: Date.now(),
-              // Only honor a non-empty, well-formed manifest. Empty/absent →
-              // legacy behavior (AI decides the screen set in Phase 1).
-              preselectedScreens: normalizePreselectedScreens(body.screens),
+              screenCount: normalizeScreenCount(body.screenCount),
             };
             generationJobs.set(job.id, job);
             void runGenerationJob(job);
@@ -696,11 +696,11 @@ Return the updated website design system only.`;
           if (body.mode === "generate-plan") {
             const idea = body.idea?.trim() || "A modern mobile app";
             const platform = body.platform ?? "ios";
-            const preselected = normalizePreselectedScreens(body.screens);
-            const phase1Prompt = preselected?.length
-              ? `App idea: ${idea}\nTarget platform: ${platform}\n\nThe user has pre-selected exactly ${preselected.length} screen(s). You MUST return EXACTLY this screens array (same ids, names, roles, same order) - do not add, remove, rename, or reorder:\n${JSON.stringify(preselected, null, 2)}`
+            const screenCount = normalizeScreenCount(body.screenCount);
+            const phase1Prompt = screenCount
+              ? `App idea: ${idea}\nTarget platform: ${platform}\n\nThe user selected exactly ${screenCount} screen(s). Return exactly ${screenCount} screens. Choose the best screen types for the app idea.`
               : `App idea: ${idea}\nTarget platform: ${platform}`;
-            const p1res = await runModel(model, systemPhase1(preselected), phase1Prompt, {
+            const p1res = await runModel(model, systemPhase1(screenCount), phase1Prompt, {
               maxOutputTokens: MAX_TOKENS.plan,
               abortSignal: request.signal,
             });
@@ -715,8 +715,7 @@ Return the updated website design system only.`;
                 { status: 502 },
               );
             }
-            if (preselected?.length)
-              plan.screens = preselected.map((s) => ({ id: s.id, name: s.name, role: s.role }));
+            plan.screens = coercePlanScreensToCount(plan.screens, screenCount);
             return Response.json({
               plan,
               usage: { mode: "generate-plan", calls: 1, ...p1res.usage },
@@ -804,13 +803,13 @@ Make ONLY the change the user asked for; leave the rest as-is.`;
           // generate
           const idea = body.idea?.trim() || "A modern mobile app";
           const platform = body.platform ?? "ios";
-          const preselected = normalizePreselectedScreens(body.screens);
+          const screenCount = normalizeScreenCount(body.screenCount);
 
           // Phase 1: shared design system + screen manifest
-          const phase1Prompt = preselected?.length
-            ? `App idea: ${idea}\nTarget platform: ${platform}\n\nThe user has pre-selected exactly ${preselected.length} screen(s). You MUST return EXACTLY this screens array (same ids, names, roles, same order) - do not add, remove, rename, or reorder:\n${JSON.stringify(preselected, null, 2)}`
+          const phase1Prompt = screenCount
+            ? `App idea: ${idea}\nTarget platform: ${platform}\n\nThe user selected exactly ${screenCount} screen(s). Return exactly ${screenCount} screens. Choose the best screen types for the app idea.`
             : `App idea: ${idea}\nTarget platform: ${platform}`;
-          const p1res = await runModel(model, systemPhase1(preselected), phase1Prompt, {
+          const p1res = await runModel(model, systemPhase1(screenCount), phase1Prompt, {
             maxOutputTokens: MAX_TOKENS.plan,
             abortSignal: request.signal,
           });
@@ -822,8 +821,7 @@ Make ONLY the change the user asked for; leave the rest as-is.`;
               { status: 502 },
             );
           }
-          if (preselected?.length)
-            p1.screens = preselected.map((s) => ({ id: s.id, name: s.name, role: s.role }));
+          p1.screens = coercePlanScreensToCount(p1.screens, screenCount);
 
           // Phase 2: per-screen HTML, actually in parallel (bounded concurrency).
           const p2others = p1.screens

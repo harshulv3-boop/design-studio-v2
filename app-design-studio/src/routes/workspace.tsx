@@ -90,9 +90,7 @@ type Search = {
   platform?: "ios" | "android";
   share?: string;
   project?: string;
-  // Pre-selected screens: comma-separated "id:name:role" triples from the
-  // landing-page picker. Optional — when absent the AI decides the screen set.
-  screens?: string;
+  screenCount?: string;
 };
 
 export const Route = createFileRoute("/workspace")({
@@ -101,7 +99,7 @@ export const Route = createFileRoute("/workspace")({
     platform: s.platform === "android" ? "android" : s.platform === "ios" ? "ios" : undefined,
     share: typeof s.share === "string" ? s.share : undefined,
     project: typeof s.project === "string" ? s.project : undefined,
-    screens: typeof s.screens === "string" ? s.screens : undefined,
+    screenCount: typeof s.screenCount === "string" ? s.screenCount : undefined,
   }),
   component: Workspace,
 });
@@ -212,7 +210,7 @@ function Workspace() {
     platform: platformParam,
     share,
     project: projectIdParam,
-    screens: screensParam,
+    screenCount: screenCountParam,
   } = Route.useSearch();
   const navigate = useNavigate();
   const [project, setProject] = useState<Project | null>(null);
@@ -309,11 +307,7 @@ function Workspace() {
 
   // ---- generation ----------------------------------------------------------
   const generate = useCallback(
-    async (
-      ideaText: string,
-      plat: "ios" | "android",
-      preselectedScreens?: { id: string; name: string; role: string }[],
-    ) => {
+    async (ideaText: string, plat: "ios" | "android", screenCount?: number | "auto") => {
       setStatus("generating");
       setChat([
         {
@@ -329,9 +323,7 @@ function Workspace() {
             mode: "start-generation",
             idea: ideaText,
             platform: plat,
-            ...(preselectedScreens && preselectedScreens.length
-              ? { screens: preselectedScreens }
-              : {}),
+            ...(screenCount !== undefined ? { screenCount } : {}),
           }),
         });
 
@@ -461,19 +453,17 @@ function Workspace() {
         if (cs) useEditorStore.getState().restore(cs);
       } else if (idea) {
         // Genuinely new idea (no matching saved project) → generate once.
-        // Parse the optional pre-selected screens manifest from the URL
-        // ("id:name:role" triples joined by commas) — empty/invalid → undefined,
-        // which lets the AI decide the screen set as before.
-        let preselectedScreens: { id: string; name: string; role: string }[] | undefined;
-        if (screensParam) {
-          const parsed = screensParam
-            .split(",")
-            .map((entry) => entry.split(":"))
-            .filter((parts) => parts.length >= 3 && parts[0] && parts[1] && parts[2])
-            .map(([id, name, role]) => ({ id, name, role }));
-          if (parsed.length) preselectedScreens = parsed;
-        }
-        generate(idea, platformParam ?? "ios", preselectedScreens);
+        const parsedCount =
+          screenCountParam === "auto"
+            ? "auto"
+            : typeof screenCountParam === "string"
+              ? Number(screenCountParam)
+              : undefined;
+        const screenCount =
+          typeof parsedCount === "number" && Number.isFinite(parsedCount)
+            ? Math.max(1, Math.min(24, Math.round(parsedCount)))
+            : parsedCount;
+        generate(idea, platformParam ?? "ios", screenCount);
       } else if (saved) {
         // Legacy block-based project — retire it silently.
         toast.message("Your previous project was on an older format", {
@@ -481,7 +471,7 @@ function Workspace() {
         });
       }
     })();
-  }, [idea, platformParam, share, projectIdParam, screensParam, generate]);
+  }, [idea, platformParam, share, projectIdParam, screenCountParam, generate]);
 
   // ---- Autosave (debounced) — mirrors the reference editor's live-save -------
   const projectRef = useRef<Project | null>(null);

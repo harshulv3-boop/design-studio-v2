@@ -1,27 +1,23 @@
 import CloneWebsite from "@/components/CloneWebsite";
 import ImportCode from "@/components/ImportCode";
 import { PhoneScreenFrame } from "@/components/PhoneScreenFrame";
-import { deleteProject, listProjects, type ProjectSummary } from "@/lib/project-store";
 import {
-  DEFAULT_SELECTED_SCREEN_IDS,
-  MAX_SCREEN_COUNT,
-  MIN_SCREEN_COUNT,
-  SCREEN_TYPE_CATALOG,
-  resolveScreenSelection,
-  type ScreenSelection,
-} from "@/lib/screen-roles";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { deleteProject, listProjects, type ProjectSummary } from "@/lib/project-store";
 import { TEMPLATES } from "@/lib/templates";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
-  Check,
   ChevronDown,
   Clock,
   Code2,
   Globe,
   Image as ImageIcon,
   Layers,
-  Minus,
-  Plus,
   Send,
   Sparkle,
   Sparkles,
@@ -228,46 +224,31 @@ function SleekLogo() {
   );
 }
 
+type ScreenCountOption = "auto" | "3" | "5" | "7" | "10" | "15" | "custom";
+
+const SCREEN_COUNT_OPTIONS: { value: ScreenCountOption; label: string; helper?: string }[] = [
+  { value: "auto", label: "Auto", helper: "Let AI decide" },
+  { value: "3", label: "3 Screens" },
+  { value: "5", label: "5 Screens", helper: "Default" },
+  { value: "7", label: "7 Screens" },
+  { value: "10", label: "10 Screens" },
+  { value: "15", label: "15 Screens" },
+  { value: "custom", label: "Custom" },
+];
+
 function Landing() {
   const navigate = useNavigate();
   const [idea, setIdea] = useState("");
   const [platform, setPlatform] = useState<"ios" | "android">("ios");
   const [creationMode, setCreationMode] = useState<"app" | "clone" | "import">("app");
-  // Pre-select screens feature: a set of preset ids the user wants generated.
-  // Defaults to DEFAULT_SELECTED_SCREEN_IDS so a user can generate without
-  // touching the picker.
-  const [selectedScreenIds, setSelectedScreenIds] = useState<string[]>(DEFAULT_SELECTED_SCREEN_IDS);
-  const [screensOpen, setScreensOpen] = useState(false);
-
-  function toggleScreen(id: string) {
-    setSelectedScreenIds((cur) => {
-      if (cur.includes(id)) return cur.filter((x) => x !== id);
-      if (cur.length >= MAX_SCREEN_COUNT) return cur;
-      return [...cur, id];
-    });
-  }
-
-  function setScreenCount(target: number) {
-    const clamped = Math.max(MIN_SCREEN_COUNT, Math.min(MAX_SCREEN_COUNT, target));
-    setSelectedScreenIds((cur) => {
-      if (clamped === cur.length) return cur;
-      if (clamped < cur.length) return cur.slice(0, clamped);
-      // Add more presets (in catalog order) until we hit the target count.
-      const next = [...cur];
-      for (const preset of SCREEN_TYPE_CATALOG) {
-        if (next.length >= clamped) break;
-        if (!next.includes(preset.id)) next.push(preset.id);
-      }
-      return next;
-    });
-  }
+  const [screenCountOption, setScreenCountOption] = useState<ScreenCountOption>("5");
+  const [customScreenCount, setCustomScreenCount] = useState(5);
 
   function launch(withIdea: string) {
     if (!withIdea.trim()) return;
-    const screens = resolveScreenSelection(selectedScreenIds);
     const params: Record<string, string> = { idea: withIdea, platform };
-    if (screens.length)
-      params.screens = screens.map((s) => `${s.id}:${s.name}:${s.role}`).join(",");
+    params.screenCount =
+      screenCountOption === "custom" ? String(customScreenCount) : screenCountOption;
     navigate({ to: "/workspace", search: () => params });
   }
 
@@ -387,87 +368,60 @@ function Landing() {
               <ImportCode onOpenProject={openProject} />
             ) : (
               <>
-                {/* Screens pre-selection — collapsed by default; uses sensible
-                    defaults so users can generate without opening it. */}
-                <div className="mb-3 rounded-2xl border border-border/50 bg-surface/40">
-                  <button
-                    type="button"
-                    onClick={() => setScreensOpen((o) => !o)}
-                    className="flex w-full items-center justify-between px-4 py-2.5 text-left"
-                    aria-expanded={screensOpen}
-                    data-testid="screens-toggle"
-                  >
-                    <div className="flex items-center gap-2">
+                <div className="mb-3 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-border/50 bg-surface/40 p-3 text-left">
+                    <div className="mb-2 flex items-center gap-2">
                       <Layers className="h-3.5 w-3.5 text-brand" />
-                      <span className="text-xs font-semibold text-foreground/90">Screens</span>
-                      <span className="rounded-full bg-surface/80 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                        {selectedScreenIds.length} selected
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Number of Screens
                       </span>
                     </div>
-                    <ChevronDown
-                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${screensOpen ? "rotate-180" : ""}`}
-                    />
-                  </button>
-                  {screensOpen && (
-                    <div className="border-t border-border/50 px-4 py-3">
-                      {/* Count stepper */}
-                      <div className="mb-3 flex items-center justify-between">
-                        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                          Number of Screens
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setScreenCount(selectedScreenIds.length - 1)}
-                            disabled={selectedScreenIds.length <= MIN_SCREEN_COUNT}
-                            className="flex h-6 w-6 items-center justify-center rounded-full bg-surface/80 text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                            aria-label="Decrease screen count"
+                    <Select
+                      value={screenCountOption}
+                      onValueChange={(value) => setScreenCountOption(value as ScreenCountOption)}
+                    >
+                      <SelectTrigger
+                        className="h-10 rounded-xl border-border/60 bg-panel/70 px-3 text-sm font-semibold text-foreground shadow-none transition-colors hover:border-brand/50 hover:bg-panel"
+                        data-testid="screen-count-select"
+                      >
+                        <SelectValue placeholder="5 Screens" />
+                      </SelectTrigger>
+                      <SelectContent className="rounded-xl border-border/70 bg-panel/95 p-1 shadow-[0_18px_50px_-20px_rgba(0,0,0,0.75)] backdrop-blur">
+                        {SCREEN_COUNT_OPTIONS.map((option) => (
+                          <SelectItem
+                            key={option.value}
+                            value={option.value}
+                            className="rounded-lg px-2.5 py-2 text-sm data-[highlighted]:bg-brand/15 data-[highlighted]:text-foreground"
                           >
-                            <Minus className="h-3 w-3" />
-                          </button>
-                          <span className="w-6 text-center text-xs font-semibold tabular-nums">
-                            {selectedScreenIds.length}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setScreenCount(selectedScreenIds.length + 1)}
-                            disabled={selectedScreenIds.length >= MAX_SCREEN_COUNT}
-                            className="flex h-6 w-6 items-center justify-center rounded-full bg-surface/80 text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                            aria-label="Increase screen count"
-                          >
-                            <Plus className="h-3 w-3" />
-                          </button>
-                        </div>
-                      </div>
-                      {/* Type chips */}
-                      <div className="flex flex-wrap gap-1.5">
-                        {SCREEN_TYPE_CATALOG.map((preset) => {
-                          const active = selectedScreenIds.includes(preset.id);
-                          return (
-                            <button
-                              key={preset.id}
-                              type="button"
-                              onClick={() => toggleScreen(preset.id)}
-                              title={preset.description}
-                              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
-                                active
-                                  ? "bg-brand text-white"
-                                  : "bg-surface/80 text-muted-foreground hover:text-foreground"
-                              }`}
-                              data-testid={`screen-type-${preset.id}`}
-                            >
-                              {active && <Check className="h-2.5 w-2.5" />}
-                              {preset.name}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <div className="mt-2 text-[10px] text-muted-foreground">
-                        Defaults selected — generate as-is or customize. Used as a guide for the AI
-                        plan.
-                      </div>
-                    </div>
-                  )}
+                            <span className="flex w-full items-center justify-between gap-3">
+                              <span>{option.label}</span>
+                              {option.helper && (
+                                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                                  {option.helper}
+                                </span>
+                              )}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {screenCountOption === "custom" && (
+                      <input
+                        type="number"
+                        min={1}
+                        max={24}
+                        value={customScreenCount}
+                        onChange={(e) => {
+                          const next = Number(e.target.value);
+                          if (Number.isFinite(next)) {
+                            setCustomScreenCount(Math.max(1, Math.min(24, Math.round(next))));
+                          }
+                        }}
+                        className="mt-2 h-9 w-full rounded-xl border border-border/60 bg-panel/70 px-3 text-sm text-foreground outline-none transition-colors focus:border-brand/60"
+                        aria-label="Custom screen count"
+                      />
+                    )}
+                  </div>
                 </div>
                 <textarea
                   value={idea}
