@@ -43,7 +43,7 @@
   "runStep": [
     {
       "name": "Run Design Studio",
-      "command": "npm run dev --prefix app-design-studio -- --host --port 8080",
+      "command": "cd app-design-studio && npm run dev -- --host 0.0.0.0 --port 8080",
       "port": "8080"
     }
   ],
