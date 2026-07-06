@@ -45,11 +45,6 @@
       "name": "Run Design Studio",
       "command": "npm run dev --prefix app-design-studio -- --host --port 8080",
       "port": "8080"
-    },
-    {
-      "name": "Run Clone Engine",
-      "command": "PORT=8081 node url-to-code/artifacts/api-server/dist/index.mjs",
-      "port": "8081"
     }
   ],
   "deploySteps": [],
