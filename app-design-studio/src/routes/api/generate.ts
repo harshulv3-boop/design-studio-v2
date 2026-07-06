@@ -233,6 +233,10 @@ async function runModel(tuning: ModelTuning, system: string, prompt: string, opt
 }
 
 type GenerationJobStatus = "queued" | "planning" | "generating" | "completed" | "failed" | "cancelled";
+// Optional pre-selected screen manifest from the landing-page picker. When
+// present, the AI is instructed to use exactly these screens (in this order)
+// instead of inventing its own set in Phase 1.
+type PreselectedScreen = { id: string; name: string; role: string };
 type GenerationJob = {
   id: string;
   idea: string;
@@ -245,6 +249,9 @@ type GenerationJob = {
   abortController: AbortController;
   createdAt: number;
   updatedAt: number;
+  // Undefined → AI decides the screen set (legacy behavior).
+  // Non-empty array → used as a hard constraint on Phase 1's screen manifest.
+  preselectedScreens?: PreselectedScreen[];
 };
 
 // In-memory job registry. NOTE: process-local — a multi-instance / multi-isolate
@@ -326,11 +333,25 @@ async function runGenerationJob(job: GenerationJob) {
     updateJob(job, { status: "planning" });
     pushProgress(job, "Creating navigation and design system...");
 
-    const p1res = await runModel(model, systemPhase1(), `App idea: ${job.idea}\nTarget platform: ${job.platform}`, { maxOutputTokens: MAX_TOKENS.plan, abortSignal: job.abortController.signal });
+    // Build the Phase 1 prompt. When the user pre-selected screens on the
+    // landing page, pass them as a hard constraint: the model still designs
+    // the shared design system (palette, fonts, CSS) but must use exactly
+    // these screens (ids/names/roles) in this order.
+    const preselected = job.preselectedScreens;
+    const phase1Prompt = preselected && preselected.length
+      ? `App idea: ${job.idea}\nTarget platform: ${job.platform}\n\nThe user has pre-selected exactly ${preselected.length} screen(s). You MUST return EXACTLY this screens array (same ids, names, roles, same order) — do not add, remove, rename, or reorder:\n${JSON.stringify(preselected, null, 2)}`
+      : `App idea: ${job.idea}\nTarget platform: ${job.platform}`;
+
+    const p1res = await runModel(model, systemPhase1(preselected), phase1Prompt, { maxOutputTokens: MAX_TOKENS.plan, abortSignal: job.abortController.signal });
     if (job.abortController.signal.aborted) throw new Error("Generation cancelled");
     const plan = extractJson(p1res.text) as Phase1;
     if (!plan?.designSystemCss || !Array.isArray(plan.screens) || plan.screens.length === 0) {
       throw new Error("Planning output invalid");
+    }
+    // Force the screen manifest to the user's pre-selection regardless of what
+    // the model returned — guarantees count and types match the picker.
+    if (preselected && preselected.length) {
+      plan.screens = preselected.map((s) => ({ id: s.id, name: s.name, role: s.role }));
     }
 
     const project: Project = {
@@ -417,9 +438,12 @@ export const Route = createFileRoute("/api/generate")({
           screenHtml?: string;   // Lite mode single-screen refine
           elementHtml?: string;  // website imports: element-scoped refine
           designSystemCss?: string;
-          websiteCss?: string;
-          projectContext?: { name: string; platform: string };
-        };
+  websiteCss?: string;
+  projectContext?: { name: string; platform: string };
+  // Pre-selected screens manifest from the landing-page picker. Optional.
+  // When supplied (non-empty), Phase 1 uses these as a hard constraint.
+  screens?: PreselectedScreen[];
+};
 
         try {
           if (body.mode === "start-generation") {
@@ -434,6 +458,12 @@ export const Route = createFileRoute("/api/generate")({
               abortController: new AbortController(),
               createdAt: Date.now(),
               updatedAt: Date.now(),
+              // Only honor a non-empty, well-formed manifest. Empty/absent →
+              // legacy behavior (AI decides the screen set in Phase 1).
+              preselectedScreens:
+                Array.isArray(body.screens) && body.screens.length > 0 && body.screens.every((s) => s && s.id && s.name && s.role)
+                  ? body.screens
+                  : undefined,
             };
             generationJobs.set(job.id, job);
             void runGenerationJob(job);

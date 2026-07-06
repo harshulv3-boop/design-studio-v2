@@ -2,9 +2,17 @@ import CloneWebsite from "@/components/CloneWebsite";
 import ImportCode from "@/components/ImportCode";
 import { PhoneScreenFrame } from "@/components/PhoneScreenFrame";
 import { deleteProject, listProjects, type ProjectSummary } from "@/lib/project-store";
+import {
+  DEFAULT_SELECTED_SCREEN_IDS,
+  MAX_SCREEN_COUNT,
+  MIN_SCREEN_COUNT,
+  SCREEN_TYPE_CATALOG,
+  resolveScreenSelection,
+  type ScreenSelection,
+} from "@/lib/screen-roles";
 import { TEMPLATES } from "@/lib/templates";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ChevronDown, Clock, Code2, Globe, Image as ImageIcon, Layers, Send, Sparkle, Sparkles, Trash2, Zap } from "lucide-react";
+import { Check, ChevronDown, Clock, Code2, Globe, Image as ImageIcon, Layers, Minus, Plus, Send, Sparkle, Sparkles, Trash2, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export const Route = createFileRoute("/")({
@@ -181,11 +189,41 @@ function Landing() {
   const [idea, setIdea] = useState("");
   const [platform, setPlatform] = useState<"ios" | "android">("ios");
   const [creationMode, setCreationMode] = useState<"app" | "clone" | "import">("app");
+  // Pre-select screens feature: a set of preset ids the user wants generated.
+  // Defaults to DEFAULT_SELECTED_SCREEN_IDS so a user can generate without
+  // touching the picker.
+  const [selectedScreenIds, setSelectedScreenIds] = useState<string[]>(DEFAULT_SELECTED_SCREEN_IDS);
+  const [screensOpen, setScreensOpen] = useState(false);
+
+  function toggleScreen(id: string) {
+    setSelectedScreenIds((cur) => {
+      if (cur.includes(id)) return cur.filter((x) => x !== id);
+      if (cur.length >= MAX_SCREEN_COUNT) return cur;
+      return [...cur, id];
+    });
+  }
+
+  function setScreenCount(target: number) {
+    const clamped = Math.max(MIN_SCREEN_COUNT, Math.min(MAX_SCREEN_COUNT, target));
+    setSelectedScreenIds((cur) => {
+      if (clamped === cur.length) return cur;
+      if (clamped < cur.length) return cur.slice(0, clamped);
+      // Add more presets (in catalog order) until we hit the target count.
+      const next = [...cur];
+      for (const preset of SCREEN_TYPE_CATALOG) {
+        if (next.length >= clamped) break;
+        if (!next.includes(preset.id)) next.push(preset.id);
+      }
+      return next;
+    });
+  }
 
   function launch(withIdea: string) {
     if (!withIdea.trim()) return;
-    const params = new URLSearchParams({ idea: withIdea, platform });
-    navigate({ to: "/workspace", search: () => Object.fromEntries(params) });
+    const screens = resolveScreenSelection(selectedScreenIds);
+    const params: Record<string, string> = { idea: withIdea, platform };
+    if (screens.length) params.screens = screens.map((s) => `${s.id}:${s.name}:${s.role}`).join(",");
+    navigate({ to: "/workspace", search: () => params });
   }
 
   function openProject(id: string) {
@@ -288,6 +326,83 @@ function Landing() {
               <ImportCode onOpenProject={openProject} />
             ) : (
               <>
+                {/* Screens pre-selection — collapsed by default; uses sensible
+                    defaults so users can generate without opening it. */}
+                <div className="mb-3 rounded-2xl border border-border/50 bg-surface/40">
+                  <button
+                    type="button"
+                    onClick={() => setScreensOpen((o) => !o)}
+                    className="flex w-full items-center justify-between px-4 py-2.5 text-left"
+                    aria-expanded={screensOpen}
+                    data-testid="screens-toggle"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Layers className="h-3.5 w-3.5 text-brand" />
+                      <span className="text-xs font-semibold text-foreground/90">Screens</span>
+                      <span className="rounded-full bg-surface/80 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        {selectedScreenIds.length} selected
+                      </span>
+                    </div>
+                    <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${screensOpen ? "rotate-180" : ""}`} />
+                  </button>
+                  {screensOpen && (
+                    <div className="border-t border-border/50 px-4 py-3">
+                      {/* Count stepper */}
+                      <div className="mb-3 flex items-center justify-between">
+                        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                          Number of Screens
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setScreenCount(selectedScreenIds.length - 1)}
+                            disabled={selectedScreenIds.length <= MIN_SCREEN_COUNT}
+                            className="flex h-6 w-6 items-center justify-center rounded-full bg-surface/80 text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                            aria-label="Decrease screen count"
+                          >
+                            <Minus className="h-3 w-3" />
+                          </button>
+                          <span className="w-6 text-center text-xs font-semibold tabular-nums">{selectedScreenIds.length}</span>
+                          <button
+                            type="button"
+                            onClick={() => setScreenCount(selectedScreenIds.length + 1)}
+                            disabled={selectedScreenIds.length >= MAX_SCREEN_COUNT}
+                            className="flex h-6 w-6 items-center justify-center rounded-full bg-surface/80 text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                            aria-label="Increase screen count"
+                          >
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                      {/* Type chips */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {SCREEN_TYPE_CATALOG.map((preset) => {
+                          const active = selectedScreenIds.includes(preset.id);
+                          return (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              onClick={() => toggleScreen(preset.id)}
+                              title={preset.description}
+                              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                                active
+                                  ? "bg-brand text-white"
+                                  : "bg-surface/80 text-muted-foreground hover:text-foreground"
+                              }`}
+                              data-testid={`screen-type-${preset.id}`}
+                            >
+                              {active && <Check className="h-2.5 w-2.5" />}
+                              {preset.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="mt-2 text-[10px] text-muted-foreground">
+                        Defaults selected — generate as-is or customize. Used as a guide for the AI plan.
+                      </div>
+                    </div>
+                  )}
+                </div>
                 <textarea
                   value={idea}
                   onChange={(e) => setIdea(e.target.value)}
